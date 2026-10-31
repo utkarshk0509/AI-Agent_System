@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Gemini LLM Configuration
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-pro"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_TEMPERATURE: float = 0.2
 
     # Docker Sandbox Configuration

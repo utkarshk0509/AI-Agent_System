@@ -45,6 +45,21 @@ app.add_middleware(
 )
 
 
+@app.get("/", tags=["System"])
+async def root():
+    """Root landing page directing users to Swagger UI and API endpoints."""
+    return {
+        "app": settings.APP_NAME,
+        "status": "online",
+        "docs_url": "/docs",
+        "health_check": "/health",
+        "endpoints": {
+            "execute": "POST /api/v1/workspace/execute",
+            "stream": "POST /api/v1/workspace/stream",
+        },
+    }
+
+
 @app.get("/health", tags=["System"])
 async def health_check():
     """Health check endpoint to probe container and service status."""

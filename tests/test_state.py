@@ -1,6 +1,5 @@
 """Tests for State models and validation."""
 
-import pytest
 from app.graph.state import AgentState, AgentStateModel
 
 

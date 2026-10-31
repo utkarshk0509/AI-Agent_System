@@ -64,3 +64,4 @@ async def test_workflow_circuit_breaker(mock_gemini_service, mock_docker_failure
 
     assert final_state["exit_code"] == 1
     assert final_state["iteration_count"] == 3
+

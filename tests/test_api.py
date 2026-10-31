@@ -48,3 +48,4 @@ async def test_stream_endpoint(mock_gemini_service, mock_docker_success):
         response = await client.post("/api/v1/workspace/stream", json=payload)
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
+

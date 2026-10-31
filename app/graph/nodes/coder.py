@@ -1,4 +1,7 @@
-"""Coder Node: Generates or refactors self-contained Python code using the Gemini 2.5 API."""
+"""Coder Node: Generates or repairs Python code using the Gemini API.
+
+FIX: Now async — uses gemini_service.generate_text_async() so it doesn't block the event loop.
+"""
 
 import re
 from typing import Dict, Any
@@ -6,26 +9,31 @@ from app.graph.state import AgentState
 from app.services.gemini_service import gemini_service
 
 CODER_SYSTEM_INSTRUCTION = """
-You are an expert Python Data Engineer. Write clean, robust, self-contained Python 3.11 code.
-Rules:
-1. Output ONLY executable Python code inside standard ```python ``` fences.
-2. The code must be self-contained (all imports, data generation/fetching, processing, and output logic included).
-3. Always print the final answer and meaningful telemetry to stdout using print().
-4. Do not prompt for interactive input (no input() calls).
-5. If fixing existing code, apply the specific instructions provided in the reviewer feedback.
+You are an expert Python Engineer. Write clean, robust, self-contained Python 3.11 code.
+
+STRICT RULES:
+1. Output ONLY code inside ```python ``` fences. Nothing else — no explanations, no markdown prose.
+2. Code must be fully self-contained: all imports, data, logic, and print() output included.
+3. Use ONLY Python standard library modules (math, json, random, statistics, itertools, etc.).
+   Do NOT import numpy, pandas, requests, or any third-party library unless told the sandbox has it.
+4. Always print final results to stdout using print().
+5. No input() calls, no file reads from external paths.
+6. If fixing code, apply the reviewer's fix instructions exactly and return the complete fixed script.
 """
 
+
 def _extract_python_code(raw_text: str) -> str:
-    """Extracts raw python code from markdown code blocks if present."""
+    """Strips markdown fences and returns raw Python code."""
     pattern = r"```(?:python)?\s*(.*?)\s*```"
     matches = re.findall(pattern, raw_text, re.DOTALL)
     if matches:
         return matches[0].strip()
+    # If no fences found, return as-is (Gemini sometimes skips fences)
     return raw_text.strip()
 
 
-def coder_node(state: AgentState) -> Dict[str, Any]:
-    """Generates initial code or patches existing code based on review feedback."""
+async def coder_node(state: AgentState) -> Dict[str, Any]:
+    """Async coder: generates initial code or repairs failing code based on reviewer feedback."""
     query = state.get("user_query", "")
     plan = state.get("plan", "")
     existing_code = state.get("generated_code")
@@ -33,18 +41,19 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
     error_trace = state.get("error_trace")
     iteration = state.get("iteration_count", 0)
 
-    # Differentiate between initial generation and iterative debugging
-    if review_feedback and existing_code:
-        prompt = f"""
-Task: Fix the following Python code based on the execution error and reviewer feedback.
+    is_repair = bool(review_feedback and existing_code)
 
-Original Query:
-{query}
+    if is_repair:
+        print(f"\n[Coder] Repair iteration #{iteration + 1}...", flush=True)
+        prompt = f"""
+Task: Fix the broken Python code using the reviewer's instructions.
+
+Original Query: {query}
 
 Plan:
 {plan}
 
-Current Broken Code:
+Broken Code:
 ```python
 {existing_code}
 ```
@@ -52,38 +61,37 @@ Current Broken Code:
 Error / Traceback:
 {error_trace}
 
-Reviewer Feedback & Fix Instructions:
+Reviewer Fix Instructions:
 {review_feedback}
 
-Please provide the corrected, complete, and self-contained Python code.
+Provide the COMPLETE corrected Python script.
 """
-        log_msg = f"[Coder Node] Refactoring code for iteration #{iteration + 1} using reviewer feedback."
+        log_msg = f"[Coder Node] Repaired code for iteration #{iteration + 1}."
     else:
+        print(f"\n[Coder] Generating initial code...", flush=True)
         prompt = f"""
-Task: Write self-contained Python code to solve the following data analysis task.
+Task: Write self-contained Python code to solve this task.
 
-User Query:
-{query}
+User Query: {query}
 
 Plan:
 {plan}
 
-Please provide the complete, executable Python code.
+Provide the complete, executable Python script.
 """
-        log_msg = f"[Coder Node] Generated initial Python code."
+        log_msg = "[Coder Node] Generated initial Python code."
 
-    # Invoke Gemini 2.5 API
-    raw_response = gemini_service.generate_text(
+    raw_response = await gemini_service.generate_text_async(
         prompt=prompt,
         system_instruction=CODER_SYSTEM_INSTRUCTION,
-        temperature=0.1,  # Low temperature for precise code generation
+        temperature=0.1,
     )
 
     clean_code = _extract_python_code(raw_response)
+    print(f"[Coder] Code ready ({len(clean_code)} chars).", flush=True)
 
     return {
         "generated_code": clean_code,
         "status": "coding_completed",
         "execution_logs": [log_msg],
     }
-

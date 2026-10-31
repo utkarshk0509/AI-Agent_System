@@ -31,3 +31,4 @@ def test_sandbox_timeout_handling(monkeypatch):
     assert "timed out" in result.stderr.lower()
     mock_container.kill.assert_called_once()
     mock_container.remove.assert_called_once()
+
