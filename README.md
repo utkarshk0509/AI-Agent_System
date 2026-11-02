@@ -142,11 +142,20 @@ Build the hardened Python execution container:
 docker build -t python:3.11-slim -f docker/runner/Dockerfile .
 ```
 
-### 5. Launch the FastAPI Server
+### 5. Launch the FastAPI Backend Server
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 Interactive API documentation is now live at: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### 6. Launch the React Web Dashboard
+In a new terminal window:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open your browser to: [http://localhost:5173](http://localhost:5173)
 
 ---
 
