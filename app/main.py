@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan context for resource verification."""
     # Pre-flight check: Verify Docker daemon connectivity
     if not docker_sandbox.client:
-        print("[WARNING] Docker daemon is not connected. Execution node will use fallback mock mode.")
+        print("[WARNING] Docker daemon is not connected. Execution node will use subprocess fallback (no container isolation).")
     else:
         print("[INFO] Connected to Docker daemon successfully.")
     yield
@@ -63,9 +63,12 @@ async def root():
 @app.get("/health", tags=["System"])
 async def health_check():
     """Health check endpoint to probe container and service status."""
+    docker_up = docker_sandbox.client is not None
     return {
         "status": "healthy",
-        "docker_available": docker_sandbox.client is not None,
+        "docker_available": docker_up,
+        # execution_mode tells the frontend which sandbox is active
+        "execution_mode": "docker" if docker_up else "subprocess",
         "gemini_model": settings.GEMINI_MODEL,
     }
 

@@ -3,7 +3,8 @@
 Key fixes applied:
 - execute_code_async(): async wrapper using asyncio.to_thread() to unblock event loop.
 - Image existence pre-check: warns clearly if image is missing (avoids silent 5-min pulls).
-- Removed double-init of temp_dir variable.
+- Subprocess fallback: when Docker is not running, code runs via local subprocess so the
+  app works without Docker at all (users only need Python installed).
 - All blocking calls (containers.run, container.wait) run in thread pool.
 """
 
@@ -11,6 +12,7 @@ import os
 import shutil
 import tempfile
 import asyncio
+import subprocess
 from typing import Optional
 from dataclasses import dataclass
 from app.core.config import settings
@@ -86,8 +88,8 @@ class DockerSandbox:
         print(f"  [Docker] Preparing sandbox (image={image}, timeout={timeout}s)...", flush=True)
 
         if not self.client:
-            print("  [Docker] Not connected — using mock fallback.", flush=True)
-            return self._mock_execution_fallback(code)
+            print("  [Docker] Not connected — using subprocess fallback.", flush=True)
+            return self._subprocess_execution_fallback(code, timeout)
 
         # FIX: Pre-check if the image exists locally.
         # If missing, containers.run() will silently pull it (takes minutes and freezes the request).
@@ -178,8 +180,85 @@ class DockerSandbox:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def _subprocess_execution_fallback(self, code: str, timeout: int) -> ExecutionResult:
+        """
+        Runs user code as a local subprocess when Docker is unavailable.
+
+        This lets the app work without Docker Desktop installed — anyone with
+        Python can run the backend and get real code execution results.
+
+        Security note: no container isolation here. Code runs as the current OS
+        user. Only use in trusted / dev environments or when Docker is absent.
+        """
+        print("  [Subprocess] Executing code locally (no Docker)...", flush=True)
+
+        # Write code to a temp file (avoids shell injection vs -c flag)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(code)
+                tmp_path = f.name
+        except Exception as e:
+            return ExecutionResult(
+                stdout="", stderr=f"Could not write temp file: {e}",
+                exit_code=-1, error_trace=str(e),
+            )
+
+        try:
+            proc = subprocess.run(
+                ["python", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            status = "SUCCESS" if proc.returncode == 0 else f"FAILED (exit={proc.returncode})"
+            print(f"  [Subprocess] {status}", flush=True)
+            return ExecutionResult(
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+                exit_code=proc.returncode,
+                error_trace=proc.stderr if proc.returncode != 0 else None,
+            )
+        except subprocess.TimeoutExpired:
+            return ExecutionResult(
+                stdout="",
+                stderr=f"Execution timed out after {timeout}s.",
+                exit_code=124,
+                error_trace=f"TimeoutError: exceeded {timeout}s limit.",
+            )
+        except FileNotFoundError:
+            # 'python' not on PATH — try 'python3'
+            try:
+                proc = subprocess.run(
+                    ["python3", tmp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                return ExecutionResult(
+                    stdout=proc.stdout,
+                    stderr=proc.stderr,
+                    exit_code=proc.returncode,
+                    error_trace=proc.stderr if proc.returncode != 0 else None,
+                )
+            except Exception as e2:
+                return ExecutionResult(
+                    stdout="", stderr=f"Python interpreter not found: {e2}",
+                    exit_code=-1, error_trace=str(e2),
+                )
+        except Exception as e:
+            return ExecutionResult(
+                stdout="", stderr=str(e), exit_code=-1, error_trace=str(e)
+            )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
     def _mock_execution_fallback(self, code: str) -> ExecutionResult:
-        """Returns a mock result when Docker is unavailable (dev mode)."""
+        """Legacy mock — kept for backward compatibility in tests."""
         return ExecutionResult(
             stdout="[MOCK MODE — Docker not connected]\nCode received and accepted.",
             stderr="",

@@ -6,7 +6,7 @@ const AgentContext = createContext();
 export function AgentProvider({ children }) {
   const [backendUrl, setBackendUrlState] = useState(getBackendUrl());
   const [backendStatus, setBackendStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
-  const [healthInfo, setHealthInfo] = useState({ docker_available: false, gemini_model: '' });
+  const [healthInfo, setHealthInfo] = useState({ docker_available: false, execution_mode: 'subprocess', gemini_model: '' });
   
   // Execution state
   const [status, setStatus] = useState('idle'); // 'idle' | 'running' | 'completed' | 'error' | 'aborted'

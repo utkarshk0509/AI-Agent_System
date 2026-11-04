@@ -144,12 +144,12 @@ async def test_full_graph_self_healing():
 
 
 def test_docker_mock_fallback():
-    print("  [TEST] Docker mock fallback (no daemon)... ", end="", flush=True)
+    print("  [TEST] Subprocess fallback (no daemon)... ", end="", flush=True)
     sb = DockerSandbox()
-    sb.client = None
-    result = sb.execute_code("print('hello')")
-    assert result.exit_code == 0
-    assert "MOCK MODE" in result.stdout
+    sb.client = None  # simulate Docker being offline
+    result = sb.execute_code("print('hello from subprocess')")
+    assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}: {result.stderr}"
+    assert "hello from subprocess" in result.stdout, f"Unexpected stdout: {result.stdout!r}"
     print("PASSED")
 
 

@@ -78,19 +78,31 @@ export default function Navbar() {
             </motion.div>
           )}
 
-          {/* Docker Indicator */}
+          {/* Docker / Execution Mode Indicator */}
           <div
-            title={healthInfo.docker_available ? 'Docker Sandbox connected' : 'Docker not detected (Fallback Mock Mode active)'}
+            title={
+              healthInfo.docker_available
+                ? 'Docker Sandbox: container isolation active'
+                : healthInfo.execution_mode === 'subprocess'
+                ? 'Docker offline — running code via local subprocess (no isolation)'
+                : 'Docker not detected (fallback mode)'
+            }
             className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors ${
               healthInfo.docker_available
                 ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                : healthInfo.execution_mode === 'subprocess'
+                ? 'bg-blue-950/40 border-blue-800/50 text-blue-300'
                 : 'bg-amber-950/30 border-amber-800/50 text-amber-300'
             }`}
           >
             <Box className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Docker</span>
+            <span className="hidden sm:inline">Sandbox</span>
             <span className="text-[10px] opacity-75">
-              {healthInfo.docker_available ? 'Ready' : 'Mock'}
+              {healthInfo.docker_available
+                ? 'Docker'
+                : healthInfo.execution_mode === 'subprocess'
+                ? 'Subprocess'
+                : 'Mock'}
             </span>
           </div>
 
