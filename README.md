@@ -110,6 +110,20 @@ autonomous-code-workspace/
 
 ## Quickstart Guide
 
+### Run everything in Docker (starts automatically)
+
+With Docker Desktop installed and a `.env` file containing your `GEMINI_API_KEY`:
+
+```bash
+docker compose up -d --build
+```
+
+Open http://localhost:3000. Both containers use `restart: unless-stopped`, so if Docker Desktop
+is set to start when you sign in (Settings → General), the app is already running whenever you
+open the browser. Re-run the command after changing code; `docker compose down` stops it for good.
+
+The manual setup below is for development.
+
 ### 1. Prerequisites
 - **Python 3.10+** (or [uv](https://docs.astral.sh/uv/))
 - **Docker Desktop / Docker Engine** (running locally or remote socket)

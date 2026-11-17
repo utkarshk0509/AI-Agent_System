@@ -114,7 +114,18 @@ class DockerSandbox:
                 stdout="", stderr=str(de), exit_code=-1, error_trace=str(de)
             )
 
-        temp_dir = tempfile.mkdtemp(prefix="agent_sandbox_")
+        shared_volume = settings.SANDBOX_SHARED_VOLUME
+        if shared_volume:
+            # Backend runs in a container: hand the script over through a named volume.
+            os.makedirs(settings.SANDBOX_WORK_DIR, exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix="agent_sandbox_", dir=settings.SANDBOX_WORK_DIR)
+            os.chmod(temp_dir, 0o755)  # readable by a non-root sandbox user
+            sandbox_dir = f"/sandbox/{os.path.basename(temp_dir)}"
+            volumes = {shared_volume: {"bind": "/sandbox", "mode": "ro"}}
+        else:
+            temp_dir = tempfile.mkdtemp(prefix="agent_sandbox_")
+            sandbox_dir = "/sandbox"
+            volumes = {temp_dir: {"bind": "/sandbox", "mode": "ro"}}
         script_path = os.path.join(temp_dir, "script.py")
         container = None
 
@@ -122,14 +133,12 @@ class DockerSandbox:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(code)
 
-            volumes = {temp_dir: {"bind": "/sandbox", "mode": "ro"}}
-
             print(f"  [Docker] Launching container...", flush=True)
             container = self.client.containers.run(
                 image=image,
-                command=["python", "/sandbox/script.py"],
+                command=["python", f"{sandbox_dir}/script.py"],
                 volumes=volumes,
-                working_dir="/sandbox",
+                working_dir=sandbox_dir,
                 network_mode=settings.SANDBOX_NETWORK_MODE,
                 mem_limit=settings.MAX_CONTAINER_MEMORY,
                 cpu_quota=settings.CPU_QUOTA_MICROS,

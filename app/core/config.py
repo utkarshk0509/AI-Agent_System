@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     MAX_CONTAINER_MEMORY: str = "512m"  # Hard memory limit to prevent OOM on host
     CPU_QUOTA_MICROS: int = 100000       # 1 CPU core equivalent
     SANDBOX_NETWORK_MODE: str = "none"   # Prevent SSRF and network access unless whitelisted
+    # When the backend itself runs in a container, host paths can't be bind-mounted into
+    # sandbox containers. Set this to a named Docker volume that is also mounted in the
+    # backend at SANDBOX_WORK_DIR; scripts are then handed over through that volume.
+    SANDBOX_SHARED_VOLUME: str = ""
+    SANDBOX_WORK_DIR: str = "/sandbox-work"
 
     # Guardrails
     MAX_ITERATIONS: int = 5

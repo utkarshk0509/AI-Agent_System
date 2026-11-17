@@ -1,0 +1,44 @@
+# Runs the whole app in Docker. Both services restart automatically whenever
+# Docker starts, so once Docker Desktop launches at sign-in the site is just there:
+#   http://localhost:3000
+#
+# First time (and after code changes):  docker compose up -d --build
+name: code-workspace
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    env_file: .env
+    environment:
+      # Scripts are passed to sandbox containers through this shared volume
+      SANDBOX_SHARED_VOLUME: code-workspace-sandbox
+      SANDBOX_WORK_DIR: /sandbox-work
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # lets the backend start sandbox containers
+      - sandbox:/sandbox-work
+    ports:
+      - "8000:8000"
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Pulls the image generated code runs in, so the first request isn't stuck downloading it.
+  sandbox-image:
+    image: ${DOCKER_SANDBOX_IMAGE:-python:3.11-slim}
+    command: ["python", "--version"]
+    restart: "no"
+
+volumes:
+  sandbox:
+    name: code-workspace-sandbox
