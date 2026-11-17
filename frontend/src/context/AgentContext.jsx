@@ -10,7 +10,8 @@ export function AgentProvider({ children }) {
   
   // Execution state
   const [status, setStatus] = useState('idle'); // 'idle' | 'running' | 'completed' | 'error' | 'aborted'
-  const [activeNode, setActiveNode] = useState(null); // 'planner' | 'coder' | 'executor' | 'reviewer'
+  const [activeNode, setActiveNode] = useState(null); // 'planner' | 'coder' | 'executor' | 'reviewer' | 'answer'
+  const [visitedNodes, setVisitedNodes] = useState([]);
   const [executionMode, setExecutionMode] = useState('stream'); // 'stream' | 'sync'
   const [query, setQuery] = useState('');
   const [maxIterations, setMaxIterations] = useState(5);
@@ -89,6 +90,7 @@ export function AgentProvider({ children }) {
   const clearWorkspace = () => {
     setStatus('idle');
     setActiveNode(null);
+    setVisitedNodes([]);
     setPlan(null);
     setGeneratedCode(null);
     setStdout(null);
@@ -109,7 +111,7 @@ export function AgentProvider({ children }) {
     }
     setStatus('aborted');
     setActiveNode(null);
-    addLog('Execution manually stopped by operator.', 'system', 'warn');
+    addLog('Run stopped.', 'system', 'warn');
   };
 
   // Apply a CodeExecutionResponse payload (sync response or final stream event)
@@ -135,7 +137,7 @@ export function AgentProvider({ children }) {
     const iterLimit = customMaxIter || maxIterations;
 
     abortControllerRef.current = new AbortController();
-    addLog(`Initiated orchestration workspace for: "${userQuery.slice(0, 70)}..."`, 'system', 'info');
+    addLog(`Started: "${userQuery.slice(0, 80)}${userQuery.length > 80 ? '…' : ''}"`, 'system', 'info');
 
     if (executionMode === 'stream') {
       let finalEvent = null;
@@ -173,8 +175,9 @@ export function AgentProvider({ children }) {
               if ('review_feedback' in d) setReviewFeedback(d.review_feedback);
               if ('final_result' in d && d.final_result) setAnswer(d.final_result);
 
-              if (event.node) {
+              if (event.node && event.node !== 'system') {
                 setActiveNode(event.node);
+                setVisitedNodes((prev) => (prev.includes(event.node) ? prev : [...prev, event.node]));
               }
               if (event.iteration !== undefined && event.iteration !== null) {
                 setIterationCount(event.iteration);
@@ -197,12 +200,12 @@ export function AgentProvider({ children }) {
               const finalStatus = finalEvent?.status;
               if (finalStatus === 'completed') {
                 setStatus('completed');
-                addLog('Multi-agent pipeline completed successfully.', 'system', 'success');
+                addLog('Finished.', 'system', 'success');
               } else {
                 setStatus('error');
                 const reason =
                   finalStatus === 'max_iterations_exceeded'
-                    ? 'Circuit breaker tripped: max iterations reached without a working answer.'
+                    ? 'Stopped after reaching the retry limit without working code.'
                     : finalEvent?.error || 'Pipeline ended without producing an answer.';
                 setError(reason);
                 addLog(reason, 'system', 'error');
@@ -263,6 +266,7 @@ export function AgentProvider({ children }) {
         refreshHealth,
         status,
         activeNode,
+        visitedNodes,
         executionMode,
         setExecutionMode,
         query,

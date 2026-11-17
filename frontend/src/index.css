@@ -4,36 +4,49 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
+    --page: 248 248 247;
+    --surface: 255 255 255;
+    --inset: 243 243 241;
+    --line: 226 226 223;
+    --ink: 28 28 30;
+    --muted: 92 92 98;
+    --faint: 140 140 146;
+    --accent: 37 88 210;
+    --accent-ink: 255 255 255;
+    --ok: 22 125 60;
+    --err: 185 28 42;
+    --warn: 150 92 8;
   }
-  
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: 18 18 20;
+      --surface: 25 25 28;
+      --inset: 32 32 36;
+      --line: 46 46 52;
+      --ink: 234 234 236;
+      --muted: 166 166 172;
+      --faint: 115 115 122;
+      --accent: 116 154 255;
+      --accent-ink: 14 14 16;
+      --ok: 86 196 124;
+      --err: 244 118 118;
+      --warn: 224 176 82;
+    }
+  }
+
   body {
-    @apply bg-[#090D16] text-slate-100 min-h-screen overflow-x-hidden;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%),
-      radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.06) 0px, transparent 50%),
-      radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 60%);
+    @apply bg-page text-ink font-sans antialiased;
+  }
+
+  ::selection {
+    background: rgb(var(--accent) / 0.2);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
   }
 }
-
-/* Custom Sleek Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #0B0F17;
-}
-::-webkit-scrollbar-thumb {
-  background: #1E293B;
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-/* Monospace Terminal Styling */
-.terminal-window {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-}
-

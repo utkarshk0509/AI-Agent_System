@@ -1,8 +1,27 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Settings, Server, Shield, Cpu, RefreshCw, Check, AlertTriangle, Save } from 'lucide-react';
 import { useAgent } from '../context/AgentContext';
 import { checkBackendHealth } from '../services/api';
+
+function Section({ title, description, children }) {
+  return (
+    <section className="grid gap-3 px-5 py-5 sm:grid-cols-[14rem_1fr] sm:gap-8">
+      <div>
+        <h2 className="text-sm font-medium">{title}</h2>
+        {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+      </div>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function Row({ label, children }) {
+  return (
+    <div className="flex justify-between gap-4 py-1.5 text-sm">
+      <dt className="text-muted">{label}</dt>
+      <dd className="text-right">{children}</dd>
+    </div>
+  );
+}
 
 export default function ConfigPage() {
   const {
@@ -16,218 +35,148 @@ export default function ConfigPage() {
     setExecutionMode,
   } = useAgent();
 
-  const [inputUrl, setInputUrl] = useState(backendUrl);
-  const [testResult, setTestResult] = useState(null);
+  const [url, setUrl] = useState(backendUrl);
+  const [test, setTest] = useState(null);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const handleTestConnection = async () => {
+  const runTest = async () => {
     setTesting(true);
-    setTestResult(null);
+    setTest(null);
     const t0 = performance.now();
-    const res = await checkBackendHealth(inputUrl);
-    const latency = Math.round(performance.now() - t0);
-
-    if (res.status === 'healthy') {
-      setTestResult({
-        success: true,
-        latency,
-        message: `Connected successfully in ${latency}ms! Model: ${res.gemini_model}, Docker: ${
-          res.docker_available ? 'Available' : 'Fallback Mock'
-        }`,
-      });
-    } else {
-      setTestResult({
-        success: false,
-        latency,
-        message: `Failed to connect: ${res.error || 'Server unreachable at ' + inputUrl}`,
-      });
-    }
+    const res = await checkBackendHealth(url);
+    const ms = Math.round(performance.now() - t0);
+    setTest(
+      res.status === 'healthy'
+        ? { ok: true, text: `Connected (${ms} ms)` }
+        : { ok: false, text: `Could not connect: ${res.error || 'no response'}` }
+    );
     setTesting(false);
   };
 
-  const handleSave = (e) => {
+  const save = (e) => {
     e.preventDefault();
-    updateBackendUrl(inputUrl);
+    updateBackendUrl(url);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setTimeout(() => setSaved(false), 2000);
   };
 
+  const fallbacks = healthInfo.gemini_fallback_models || [];
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 15 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -15 }}
-      transition={{ duration: 0.25 }}
-      className="max-w-4xl mx-auto space-y-6"
-    >
-      {/* Header */}
-      <div className="flex items-center space-x-3 border-b border-borderDim pb-4">
-        <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-          <Settings className="w-6 h-6" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-slate-100">Workspace Configuration</h1>
-          <p className="text-xs text-slate-400">
-            Configure backend connection endpoints, execution policies, and model routing.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="mt-1 text-[15px] text-muted">Saved in this browser only.</p>
       </div>
 
-      {/* Backend API Connection Form */}
-      <div className="bg-panel/90 border border-borderDim rounded-2xl p-5 shadow-xl space-y-4">
-        <div className="flex items-center space-x-2 text-sm font-semibold text-slate-200">
-          <Server className="w-4 h-4 text-cyan-400" />
-          <span>Backend API Gateway</span>
-        </div>
-
-        <form onSubmit={handleSave} className="space-y-4">
-          <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1.5">
-              BACKEND ENDPOINT URL
-            </label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="url"
-                required
-                value={inputUrl}
-                onChange={(e) => setInputUrl(e.target.value)}
-                placeholder="http://localhost:8000"
-                className="flex-1 bg-[#090D16] border border-borderDim rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500/60"
-              />
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={testing}
-                className="px-4 py-2.5 rounded-xl bg-surface hover:bg-surfaceHover border border-borderDim text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-                <span>Test Ping</span>
-              </button>
+      <div className="divide-y divide-line rounded-lg border border-line bg-surface">
+        <Section title="Backend address" description="Where the API server is running.">
+          <form onSubmit={save} className="space-y-2">
+            <input
+              type="url"
+              required
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="http://localhost:8000"
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-sm focus:border-accent focus:outline-none"
+            />
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md cursor-pointer"
+                className="rounded-md bg-accent px-3.5 py-1.5 text-sm font-medium text-accent-ink hover:opacity-90 transition-opacity"
               >
-                {saved ? <Check className="w-4 h-4 text-white" /> : <Save className="w-4 h-4" />}
-                <span>{saved ? 'Saved!' : 'Save URL'}</span>
+                {saved ? 'Saved' : 'Save'}
               </button>
+              <button
+                type="button"
+                onClick={runTest}
+                disabled={testing}
+                className="rounded-md border border-line px-3.5 py-1.5 text-sm hover:bg-inset transition-colors disabled:opacity-50"
+              >
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+              {test && <span className={`text-sm ${test.ok ? 'text-ok' : 'text-err'}`}>{test.text}</span>}
             </div>
-          </div>
-        </form>
+          </form>
+        </Section>
 
-        {/* Test Connection Result Box */}
-        {testResult && (
-          <motion.div
-            initial={{ opacity: 0, y: -5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`p-3.5 rounded-xl border text-xs font-mono flex items-start space-x-2.5 ${
-              testResult.success
-                ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
-                : 'bg-rose-950/30 border-rose-800/50 text-rose-300'
-            }`}
-          >
-            {testResult.success ? (
-              <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-            )}
-            <div>
-              <p className="font-semibold">{testResult.message}</p>
-              <p className="text-[11px] opacity-75 mt-0.5">Round-trip response time: {testResult.latency}ms</p>
-            </div>
-          </motion.div>
-        )}
-      </div>
-
-      {/* Execution Policies & Guardrails */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* Guardrail Iterations */}
-        <div className="bg-panel/90 border border-borderDim rounded-2xl p-5 shadow-xl space-y-3">
-          <div className="flex items-center space-x-2 text-sm font-semibold text-slate-200">
-            <Shield className="w-4 h-4 text-violet-400" />
-            <span>Circuit Breaker Guardrail</span>
-          </div>
-          <p className="text-xs text-slate-400">
-            Enforces a hard upper ceiling on self-healing retry iterations to protect your API budget and avoid infinite repair loops.
-          </p>
-
-          <div className="pt-2">
-            <div className="flex items-center justify-between text-xs text-slate-300 mb-1.5 font-mono">
-              <span>Max Retries per Task:</span>
-              <span className="text-cyan-400 font-bold">{maxIterations} attempts</span>
-            </div>
+        <Section
+          title="Max attempts"
+          description="How many times broken code is fixed and re-run before giving up."
+        >
+          <div className="flex items-center gap-4">
             <input
               type="range"
               min="1"
               max="10"
               value={maxIterations}
               onChange={(e) => setMaxIterations(Number(e.target.value))}
-              className="w-full accent-cyan-500 cursor-pointer"
+              className="w-full max-w-xs accent-accent"
+              aria-label="Max attempts"
             />
-            <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1">
-              <span>1 (No retry)</span>
-              <span>5 (Recommended)</span>
-              <span>10 (Max)</span>
-            </div>
+            <span className="w-6 text-sm font-medium tabular-nums">{maxIterations}</span>
           </div>
-        </div>
+        </Section>
 
-        {/* Transport Mode */}
-        <div className="bg-panel/90 border border-borderDim rounded-2xl p-5 shadow-xl space-y-3">
-          <div className="flex items-center space-x-2 text-sm font-semibold text-slate-200">
-            <Cpu className="w-4 h-4 text-emerald-400" />
-            <span>Telemetry Transport Protocol</span>
+        <Section title="Progress updates" description="How results come back from the server.">
+          <div className="space-y-2">
+            {[
+              { id: 'stream', title: 'Show each step as it happens', note: 'Recommended' },
+              { id: 'sync', title: 'Wait for the final result', note: 'One response at the end' },
+            ].map((opt) => (
+              <label
+                key={opt.id}
+                className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors ${
+                  executionMode === opt.id ? 'border-accent/60 bg-accent/5' : 'border-line hover:bg-inset'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="mode"
+                  checked={executionMode === opt.id}
+                  onChange={() => setExecutionMode(opt.id)}
+                  className="mt-0.5 accent-accent"
+                />
+                <span>
+                  <span className="block text-sm">{opt.title}</span>
+                  <span className="block text-xs text-muted">{opt.note}</span>
+                </span>
+              </label>
+            ))}
           </div>
-          <p className="text-xs text-slate-400">
-            Select between real-time step-by-step event streaming or synchronous batch output.
-          </p>
+        </Section>
 
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setExecutionMode('stream')}
-              className={`p-3 rounded-xl border text-left transition-all ${
-                executionMode === 'stream'
-                  ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300'
-                  : 'bg-surface border-borderDim text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <div className="text-xs font-bold font-mono">SSE Stream</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Real-time node transitions</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setExecutionMode('sync')}
-              className={`p-3 rounded-xl border text-left transition-all ${
-                executionMode === 'sync'
-                  ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300'
-                  : 'bg-surface border-borderDim text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <div className="text-xs font-bold font-mono">Sync REST</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Single JSON response</div>
-            </button>
-          </div>
-        </div>
-
+        <Section title="Server details" description="Reported by the backend.">
+          {backendStatus === 'online' ? (
+            <dl>
+              <Row label="Model">
+                <span className="font-mono">{healthInfo.gemini_model || '—'}</span>
+              </Row>
+              {fallbacks.length > 0 && (
+                <Row label="Fallback models">
+                  <span className="font-mono">{fallbacks.join(', ')}</span>
+                </Row>
+              )}
+              <Row label="API key">
+                {healthInfo.gemini_configured ? 'Set' : <span className="text-err">Missing</span>}
+              </Row>
+              <Row label="Code runs in">
+                {healthInfo.docker_available ? 'Docker container' : 'Local process'}
+              </Row>
+              {!healthInfo.docker_available && (
+                <p className="mt-2 text-sm text-warn">
+                  Docker isn't available, so generated code runs directly on the server machine without isolation.
+                </p>
+              )}
+            </dl>
+          ) : (
+            <p className="text-sm text-muted">
+              {backendStatus === 'checking' ? 'Checking…' : 'Not connected.'}
+            </p>
+          )}
+        </Section>
       </div>
-
-      {/* Security Policies Overview */}
-      <div className="p-4 rounded-xl bg-surface/60 border border-borderDim text-xs text-slate-400 space-y-2">
-        <div className="font-semibold text-slate-300 flex items-center space-x-1.5">
-          <Shield className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Active Sandboxing Hardening Constraints</span>
-        </div>
-        <ul className="list-disc pl-5 space-y-1 text-[11px] font-mono text-slate-400">
-          <li>Network isolation: <code className="text-cyan-400">network_mode="none"</code> (prevents SSRF & data exfiltration)</li>
-          <li>Memory ceiling: <code className="text-cyan-400">mem_limit="512m"</code> with process cgroup quota</li>
-          <li>Execution timeout: <code className="text-cyan-400">EXECUTION_TIMEOUT_SECONDS=30</code> with exit code 124 termination</li>
-          <li>Privilege escalation: <code className="text-cyan-400">no-new-privileges:true</code> under unprivileged user</li>
-        </ul>
-      </div>
-    </motion.div>
+    </div>
   );
 }
-
