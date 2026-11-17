@@ -58,7 +58,8 @@ def test_state_validation():
 
 def test_edge_routing():
     print("  [TEST] Conditional edges & circuit breakers... ", end="", flush=True)
-    assert route_after_execution({"exit_code": 0, "iteration_count": 1, "max_iterations": 5}) == "success"
+    assert route_after_execution({"exit_code": 0, "stdout": "ok\n", "iteration_count": 1, "max_iterations": 5}) == "success"
+    assert route_after_execution({"exit_code": 0, "stdout": "", "iteration_count": 1, "max_iterations": 5}) == "reviewer"
     assert route_after_execution({"exit_code": 1, "iteration_count": 2, "max_iterations": 5}) == "reviewer"
     assert route_after_execution({"exit_code": 1, "iteration_count": 5, "max_iterations": 5}) == "max_iterations_reached"
     print("PASSED")

@@ -4,14 +4,31 @@ from unittest.mock import MagicMock
 from app.services.docker_sandbox import DockerSandbox, ExecutionResult
 
 
-def test_sandbox_mock_fallback():
-    """Verify fallback when Docker is unavailable."""
+def test_sandbox_subprocess_fallback():
+    """Without Docker, code really runs in a local subprocess."""
     sandbox = DockerSandbox()
     sandbox.client = None
-    result = sandbox.execute_code("print('test')")
+    result = sandbox.execute_code("print(6 * 7)")
     assert isinstance(result, ExecutionResult)
     assert result.exit_code == 0
-    assert "Mock Execution" in result.stdout
+    assert result.stdout.strip() == "42"
+
+
+def test_sandbox_subprocess_unicode_output():
+    """Non-ASCII output must not crash on Windows' cp1252 default encoding."""
+    sandbox = DockerSandbox()
+    sandbox.client = None
+    result = sandbox.execute_code("print('φ ≈ 1.618 ✓')")
+    assert result.exit_code == 0, result.stderr
+    assert "φ" in result.stdout
+
+
+def test_sandbox_subprocess_error_exit_code():
+    sandbox = DockerSandbox()
+    sandbox.client = None
+    result = sandbox.execute_code("raise ValueError('boom')")
+    assert result.exit_code != 0
+    assert "ValueError" in result.stderr
 
 
 def test_sandbox_timeout_handling(monkeypatch):

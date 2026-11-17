@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import asyncio
 import subprocess
+import sys
 from typing import Optional
 from dataclasses import dataclass
 from app.core.config import settings
@@ -133,6 +134,7 @@ class DockerSandbox:
                 mem_limit=settings.MAX_CONTAINER_MEMORY,
                 cpu_quota=settings.CPU_QUOTA_MICROS,
                 pids_limit=100,
+                environment={"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
                 security_opt=["no-new-privileges:true"],
                 detach=True,
                 stdout=True,
@@ -205,12 +207,21 @@ class DockerSandbox:
                 exit_code=-1, error_trace=str(e),
             )
 
+        # Use the interpreter running this server (a bare "python" on Windows may
+        # resolve to the Microsoft Store stub or a different install), and force
+        # UTF-8 I/O so printing non-ASCII (e.g. "φ", "✓") doesn't raise
+        # UnicodeEncodeError under the Windows cp1252 default.
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         try:
             proc = subprocess.run(
-                ["python", tmp_path],
+                [sys.executable or "python", tmp_path],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
+                env=env,
+                cwd=tempfile.gettempdir(),
             )
             status = "SUCCESS" if proc.returncode == 0 else f"FAILED (exit={proc.returncode})"
             print(f"  [Subprocess] {status}", flush=True)
@@ -227,26 +238,6 @@ class DockerSandbox:
                 exit_code=124,
                 error_trace=f"TimeoutError: exceeded {timeout}s limit.",
             )
-        except FileNotFoundError:
-            # 'python' not on PATH — try 'python3'
-            try:
-                proc = subprocess.run(
-                    ["python3", tmp_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-                return ExecutionResult(
-                    stdout=proc.stdout,
-                    stderr=proc.stderr,
-                    exit_code=proc.returncode,
-                    error_trace=proc.stderr if proc.returncode != 0 else None,
-                )
-            except Exception as e2:
-                return ExecutionResult(
-                    stdout="", stderr=f"Python interpreter not found: {e2}",
-                    exit_code=-1, error_trace=str(e2),
-                )
         except Exception as e:
             return ExecutionResult(
                 stdout="", stderr=str(e), exit_code=-1, error_trace=str(e)

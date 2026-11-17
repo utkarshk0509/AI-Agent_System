@@ -176,8 +176,9 @@ curl -X POST "http://localhost:8000/api/v1/workspace/execute" \
 {
   "status": "completed",
   "query": "Generate 100 samples from a normal distribution...",
-  "plan": "1. Import numpy and json\n2. Generate sample\n3. Calculate metrics\n4. Output JSON",
-  "final_code": "import numpy as np\nimport json\n...",
+  "answer": "The sample mean is 50.12 and the standard deviation is 9.87.",
+  "plan": "1. Use random.gauss\n2. Generate sample\n3. Calculate metrics\n4. Output JSON",
+  "final_code": "import random, statistics, json\n...",
   "stdout": "{\"mean\": 50.12, \"std\": 9.87}\n",
   "stderr": "",
   "exit_code": 0,
@@ -198,6 +199,17 @@ curl -N -X POST "http://localhost:8000/api/v1/workspace/stream" \
   -H "Content-Type: application/json" \
   -d '{"query": "Calculate the 50th Fibonacci number", "max_iterations": 3}'
 ```
+
+Each event is `{"node", "status", "logs", "iteration", "data"}`, where `data` holds the
+artifacts that node produced (`plan`, `generated_code`, `stdout`, `stderr`, `exit_code`,
+`review_feedback`, `final_result`). The stream always ends with
+`{"node": "done", "status": "...", "result": <same shape as the sync response>}`
+(or `{"node": "done", "status": "error", "error": "..."}`).
+
+### Model fallback
+If `GEMINI_MODEL` is overloaded (503), rate-limited (429), times out (504) or retired (404),
+each call is retried and then falls through `GEMINI_FALLBACK_MODELS` in order.
+Auth/bad-request errors (400/401/403) are raised immediately.
 
 ---
 

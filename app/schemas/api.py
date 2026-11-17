@@ -12,6 +12,7 @@ class CodeExecutionResponse(BaseModel):
     """Final workflow response returned by FastAPI."""
     status: str = Field(..., description="'completed', 'failed', or 'max_iterations_exceeded'")
     query: str
+    answer: Optional[str] = Field(None, description="Direct answer to the query, synthesized from program output")
     plan: Optional[str] = None
     final_code: Optional[str] = None
     stdout: Optional[str] = None

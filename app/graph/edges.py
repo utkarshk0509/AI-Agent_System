@@ -16,9 +16,11 @@ def route_after_execution(state: AgentState) -> Literal["success", "reviewer", "
     exit_code = state.get("exit_code")
     iteration_count = state.get("iteration_count", 0)
     max_iterations = state.get("max_iterations", 5)
+    has_output = bool((state.get("stdout") or "").strip())
 
-    # 1. Clean execution check
-    if exit_code == 0:
+    # 1. Clean execution check. A script that exits 0 but prints nothing has
+    #    not produced an answer, so it is sent back for repair as well.
+    if exit_code == 0 and has_output:
         return "success"
 
     # 2. Infinite loop prevention circuit breaker

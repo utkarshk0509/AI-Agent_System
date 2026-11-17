@@ -33,6 +33,7 @@ async def test_execute_endpoint(mock_gemini_service, mock_docker_success):
         assert data["status"] == "completed"
         assert data["exit_code"] == 0
         assert data["iteration_count"] == 1
+        assert data["answer"]
         assert len(data["execution_logs"]) > 0
 
 
@@ -48,4 +49,15 @@ async def test_stream_endpoint(mock_gemini_service, mock_docker_success):
         response = await client.post("/api/v1/workspace/stream", json=payload)
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
+        import json
+        events = [json.loads(l[5:]) for l in response.text.splitlines() if l.startswith("data:")]
+        nodes = [e["node"] for e in events]
+        assert nodes[:3] == ["planner", "coder", "executor"]
+        # Artifacts are streamed, not just log lines
+        assert "plan" in events[0]["data"]
+        assert "stdout" in events[2]["data"]
+        # Stream always ends with the full result
+        assert events[-1]["node"] == "done"
+        assert events[-1]["status"] == "completed"
+        assert events[-1]["result"]["answer"]
 

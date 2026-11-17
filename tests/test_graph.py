@@ -12,8 +12,9 @@ async def test_workflow_clean_success(mock_gemini_service, mock_docker_success, 
     final_state = await graph.ainvoke(sample_initial_state)
 
     assert final_state["exit_code"] == 0
-    assert final_state["status"] == "execution_success"
+    assert final_state["status"] == "completed"
     assert final_state["iteration_count"] == 1
+    assert final_state["final_result"]
     assert final_state["plan"] is not None
     assert final_state["generated_code"] is not None
 
@@ -25,7 +26,7 @@ async def test_workflow_repair_loop_success(monkeypatch, mock_gemini_service, sa
     
     call_count = 0
 
-    def fail_then_succeed(code, timeout_seconds=None):
+    async def fail_then_succeed(code, timeout_seconds=None, image_name=None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -43,7 +44,7 @@ async def test_workflow_repair_loop_success(monkeypatch, mock_gemini_service, sa
                 error_trace=None,
             )
 
-    monkeypatch.setattr(docker_sandbox, "execute_code", fail_then_succeed)
+    monkeypatch.setattr(docker_sandbox, "execute_code_async", fail_then_succeed)
 
     graph = create_code_workspace_graph()
     final_state = await graph.ainvoke(sample_initial_state)

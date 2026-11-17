@@ -24,6 +24,7 @@ from app.graph.nodes.planner import planner_node
 from app.graph.nodes.coder import coder_node
 from app.graph.nodes.executor import executor_node
 from app.graph.nodes.reviewer import reviewer_node
+from app.graph.nodes.answer import answer_node
 from app.graph.edges import route_after_execution
 
 
@@ -37,6 +38,7 @@ def create_code_workspace_graph():
     workflow.add_node("coder", coder_node)
     workflow.add_node("executor", executor_node)
     workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("answer", answer_node)
 
     # 2. Add Deterministic Transitions
     workflow.add_edge(START, "planner")
@@ -49,11 +51,12 @@ def create_code_workspace_graph():
         "executor",
         route_after_execution,
         {
-            "success": END,
+            "success": "answer",
             "reviewer": "reviewer",
             "max_iterations_reached": END,
         },
     )
+    workflow.add_edge("answer", END)
 
     # 4. Add Cyclic Edge: Reviewer routes back to Coder with debugging feedback
     workflow.add_edge("reviewer", "coder")

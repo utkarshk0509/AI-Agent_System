@@ -31,8 +31,18 @@ async def executor_node(state: AgentState) -> Dict[str, Any]:
     # FIX: Use async version — runs Docker SDK in thread pool, not event loop
     result = await docker_sandbox.execute_code_async(code)
 
-    is_success = (result.exit_code == 0)
-    log_status = "SUCCESS" if is_success else f"FAILED (exit={result.exit_code})"
+    no_output = result.exit_code == 0 and not (result.stdout or "").strip()
+    is_success = result.exit_code == 0 and not no_output
+    if no_output:
+        result.error_trace = (
+            "The script exited cleanly but printed NOTHING to stdout, so no answer "
+            "was produced. The final result must be printed with print()."
+        )
+    log_status = (
+        "SUCCESS" if is_success
+        else "FAILED (no output)" if no_output
+        else f"FAILED (exit={result.exit_code})"
+    )
     print(f"[Executor] Attempt #{current_iteration} — {log_status}", flush=True)
 
     updates: Dict[str, Any] = {
@@ -42,13 +52,11 @@ async def executor_node(state: AgentState) -> Dict[str, Any]:
         "exit_code": result.exit_code,
         "error_trace": result.error_trace,
         "status": "execution_success" if is_success else "execution_error",
+        "final_result": result.stdout if is_success else None,
         "execution_logs": [
             f"[Executor Node] Attempt #{current_iteration} — {log_status}. "
             f"stdout={len(result.stdout)} chars, stderr={len(result.stderr)} chars."
         ],
     }
-
-    if is_success:
-        updates["final_result"] = result.stdout
 
     return updates

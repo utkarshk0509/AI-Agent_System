@@ -23,6 +23,7 @@ export function AgentProvider({ children }) {
   const [stderr, setStderr] = useState(null);
   const [exitCode, setExitCode] = useState(null);
   const [reviewFeedback, setReviewFeedback] = useState(null);
+  const [answer, setAnswer] = useState(null);
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState(null);
   const [startTime, setStartTime] = useState(null);
@@ -94,6 +95,7 @@ export function AgentProvider({ children }) {
     setStderr(null);
     setExitCode(null);
     setReviewFeedback(null);
+    setAnswer(null);
     setLogs([]);
     setError(null);
     setIterationCount(0);
@@ -110,6 +112,18 @@ export function AgentProvider({ children }) {
     addLog('Execution manually stopped by operator.', 'system', 'warn');
   };
 
+  // Apply a CodeExecutionResponse payload (sync response or final stream event)
+  const applyResult = (result) => {
+    setPlan(result.plan ?? null);
+    setGeneratedCode(result.final_code ?? null);
+    setStdout(result.stdout ?? null);
+    setStderr(result.stderr ?? null);
+    setExitCode(result.exit_code ?? null);
+    setIterationCount(result.iteration_count ?? 0);
+    setReviewFeedback(result.review_feedback ?? null);
+    setAnswer(result.answer ?? null);
+  };
+
   const runAgent = async (userQuery, customMaxIter = null) => {
     if (!userQuery.trim() || status === 'running') return;
 
@@ -124,17 +138,40 @@ export function AgentProvider({ children }) {
     addLog(`Initiated orchestration workspace for: "${userQuery.slice(0, 70)}..."`, 'system', 'info');
 
     if (executionMode === 'stream') {
+      let finalEvent = null;
       try {
         await streamWorkspace(
           { query: userQuery, max_iterations: iterLimit },
           {
             signal: abortControllerRef.current.signal,
             onEvent: (event) => {
+              // Final event: carries the full result (or an error) and the real status
+              if (event.node === 'done') {
+                finalEvent = event;
+                if (event.error) {
+                  setError(event.error);
+                  addLog(`Stream error: ${event.error}`, 'system', 'error');
+                  return;
+                }
+                applyResult(event.result || {});
+                return;
+              }
+
               if (event.error) {
                 setError(event.error);
                 addLog(`Stream error: ${event.error}`, 'system', 'error');
                 return;
               }
+
+              // Artifacts produced by this node (plan, code, stdout, ...)
+              const d = event.data || {};
+              if ('plan' in d) setPlan(d.plan);
+              if ('generated_code' in d) setGeneratedCode(d.generated_code);
+              if ('stdout' in d) setStdout(d.stdout);
+              if ('stderr' in d) setStderr(d.stderr);
+              if ('exit_code' in d) setExitCode(d.exit_code);
+              if ('review_feedback' in d) setReviewFeedback(d.review_feedback);
+              if ('final_result' in d && d.final_result) setAnswer(d.final_result);
 
               if (event.node) {
                 setActiveNode(event.node);
@@ -156,10 +193,20 @@ export function AgentProvider({ children }) {
               }
             },
             onComplete: async () => {
-              // Finalize state by fetching final payload if needed or setting completed
-              setStatus('completed');
               setActiveNode(null);
-              addLog('Multi-agent pipeline completed successfully.', 'system', 'success');
+              const finalStatus = finalEvent?.status;
+              if (finalStatus === 'completed') {
+                setStatus('completed');
+                addLog('Multi-agent pipeline completed successfully.', 'system', 'success');
+              } else {
+                setStatus('error');
+                const reason =
+                  finalStatus === 'max_iterations_exceeded'
+                    ? 'Circuit breaker tripped: max iterations reached without a working answer.'
+                    : finalEvent?.error || 'Pipeline ended without producing an answer.';
+                setError(reason);
+                addLog(reason, 'system', 'error');
+              }
             },
             onError: (err) => {
               setStatus('error');
@@ -184,13 +231,7 @@ export function AgentProvider({ children }) {
           { signal: abortControllerRef.current.signal }
         );
 
-        setPlan(result.plan);
-        setGeneratedCode(result.final_code);
-        setStdout(result.stdout);
-        setStderr(result.stderr);
-        setExitCode(result.exit_code);
-        setIterationCount(result.iteration_count);
-        setReviewFeedback(result.review_feedback);
+        applyResult(result);
 
         if (result.execution_logs && Array.isArray(result.execution_logs)) {
           result.execution_logs.forEach((log) => {
@@ -234,6 +275,7 @@ export function AgentProvider({ children }) {
         stderr,
         exitCode,
         reviewFeedback,
+        answer,
         logs,
         error,
         elapsedTime,

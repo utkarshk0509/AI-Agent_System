@@ -34,7 +34,9 @@ async def reviewer_node(state: AgentState) -> Dict[str, Any]:
     print(f"\n[Reviewer] Analyzing failure (iteration #{iteration})...", flush=True)
 
     # Common fast-path: detect third-party import errors before calling LLM
-    error_text = stderr or error_trace or ""
+    # Prefer error_trace: for "exit 0 but no output" stderr is empty and the
+    # explanation lives only in error_trace.
+    error_text = error_trace or stderr or ""
     if "ModuleNotFoundError" in error_text or "No module named" in error_text:
         # Extract the module name for a precise fast fix
         import re

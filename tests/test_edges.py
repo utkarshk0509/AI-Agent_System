@@ -66,3 +66,9 @@ def test_route_circuit_breaker_tripped():
     decision = route_after_execution(state)
     assert decision == "max_iterations_reached"
 
+
+
+def test_route_exit_zero_without_output_goes_to_reviewer():
+    from app.graph.edges import route_after_execution
+    state = {"exit_code": 0, "stdout": "  \n", "iteration_count": 1, "max_iterations": 3}
+    assert route_after_execution(state) == "reviewer"

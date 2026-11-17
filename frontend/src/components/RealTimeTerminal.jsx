@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Terminal, Code, Cpu, Wrench, Copy, Check, ArrowDownCircle, Trash2, FileText } from 'lucide-react';
+import { Terminal, Code, Cpu, Wrench, Copy, Check, ArrowDownCircle, Trash2, FileText, Sparkles } from 'lucide-react';
 import { useAgent } from '../context/AgentContext';
 
 export default function RealTimeTerminal() {
-  const { logs, generatedCode, stdout, stderr, exitCode, plan, reviewFeedback, status } = useAgent();
-  const [activeTab, setActiveTab] = useState('logs'); // 'logs' | 'code' | 'output' | 'plan'
+  const { logs, generatedCode, stdout, stderr, exitCode, plan, reviewFeedback, status, answer, error } = useAgent();
+  const [activeTab, setActiveTab] = useState('logs'); // 'answer' | 'logs' | 'code' | 'output' | 'plan'
   const [copied, setCopied] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef(null);
@@ -17,15 +17,11 @@ export default function RealTimeTerminal() {
     }
   }, [logs, autoScroll, activeTab]);
 
-  // Automatically switch tab to code or output when available
+  // When a run finishes, jump to the answer (or to the error/output on failure)
   useEffect(() => {
-    if (generatedCode && activeTab === 'logs' && status === 'running') {
-      // Keep on logs during streaming for live feed
-    }
-    if (status === 'completed') {
-      // If code was generated, user often wants to see output or code
-    }
-  }, [generatedCode, status]);
+    if (status === 'completed' || status === 'error') setActiveTab('answer');
+    if (status === 'running') setActiveTab('logs');
+  }, [status]);
 
   const handleCopy = (content) => {
     if (!content) return;
@@ -62,6 +58,18 @@ export default function RealTimeTerminal() {
 
           {/* Navigation Tabs */}
           <div className="flex space-x-1 bg-surface p-0.5 rounded-lg border border-borderDim text-xs font-mono">
+            <button
+              onClick={() => setActiveTab('answer')}
+              className={`px-3 py-1 rounded-md flex items-center space-x-1.5 transition-all ${
+                activeTab === 'answer'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Answer {answer ? '•' : ''}</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('logs')}
               className={`px-3 py-1 rounded-md flex items-center space-x-1.5 transition-all ${
@@ -131,7 +139,8 @@ export default function RealTimeTerminal() {
 
           <button
             onClick={() => {
-              if (activeTab === 'logs') handleCopy(logs.map(l => `[${l.timestamp}] [${l.node}] ${l.message}`).join('\n'));
+              if (activeTab === 'answer') handleCopy(answer);
+              else if (activeTab === 'logs') handleCopy(logs.map(l => `[${l.timestamp}] [${l.node}] ${l.message}`).join('\n'));
               else if (activeTab === 'code') handleCopy(generatedCode);
               else if (activeTab === 'output') handleCopy(`STDOUT:\n${stdout || ''}\n\nSTDERR:\n${stderr || ''}`);
               else if (activeTab === 'plan') handleCopy(plan);
@@ -147,6 +156,28 @@ export default function RealTimeTerminal() {
       {/* Terminal View Body */}
       <div ref={scrollRef} className="flex-1 p-4 overflow-y-auto bg-[#070A10] font-mono text-xs leading-relaxed">
         
+        {/* Tab 0: Final Answer */}
+        {activeTab === 'answer' && (
+          <div>
+            {answer ? (
+              <div className="p-4 bg-emerald-950/20 rounded-lg border border-emerald-900/40 text-slate-100 whitespace-pre-wrap leading-relaxed font-sans text-sm">
+                {answer}
+              </div>
+            ) : error ? (
+              <div className="p-4 bg-rose-950/20 rounded-lg border border-rose-900/50 text-rose-300 whitespace-pre-wrap">
+                <p className="font-semibold mb-1">No answer was produced.</p>
+                <p>{error}</p>
+                {stderr && <p className="mt-2 text-rose-400/80">See the Stdout / Stderr tab for the last traceback.</p>}
+              </div>
+            ) : (
+              <div className="text-slate-500 text-center py-20 select-none">
+                <Sparkles className="w-10 h-10 mb-2 mx-auto opacity-30 text-emerald-400" />
+                <p>{status === 'running' ? 'Working on it...' : 'The final answer will appear here.'}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tab 1: Live Logs View */}
         {activeTab === 'logs' && (
           <div className="space-y-1.5">
