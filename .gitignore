@@ -71,3 +71,6 @@ Thumbs.db
 # Project-specific temp directories
 sandbox_runs/
 *.log
+
+.vercel
+.env*

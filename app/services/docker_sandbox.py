@@ -166,7 +166,11 @@ class DockerSandbox:
 
         # sys.executable instead of "python": on Windows a bare "python" can hit the
         # Microsoft Store stub. UTF-8 env vars stop non-ASCII prints from crashing on cp1252.
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        # Only pass a minimal environment so generated code can't read secrets such as
+        # GEMINI_API_KEY from os.environ (matters when this mode runs on a public host).
+        keep = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "HOME", "LANG")
+        env = {k: os.environ[k] for k in keep if k in os.environ}
+        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         try:
             proc = subprocess.run(
                 [sys.executable, script_path],
