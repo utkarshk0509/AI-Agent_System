@@ -1,13 +1,11 @@
 """Tests for Gemini retry / model-fallback behaviour (no network)."""
 
 from types import SimpleNamespace
+
 import pytest
 from google.genai import errors as genai_errors
 
-import importlib
-
-# app.services re-exports the *instance* under the module's name, so resolve the module itself
-gs_module = importlib.import_module("app.services.gemini_service")
+from app.services import gemini_service as gs_module
 from app.services.gemini_service import GeminiService, GeminiUnavailableError
 
 

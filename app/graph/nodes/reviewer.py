@@ -1,10 +1,8 @@
-"""Reviewer Node: Analyzes stderr/tracebacks and produces targeted fix instructions.
+"""Reviewer: reads the error from a failed run and tells the coder how to fix it."""
 
-FIX: Now async — uses gemini_service.generate_text_async() so it doesn't block the event loop.
-     Also adds special handling for the most common sandbox error: missing third-party packages.
-"""
+import re
+from typing import Any, Dict
 
-from typing import Dict, Any
 from app.graph.state import AgentState
 from app.services.gemini_service import gemini_service
 
@@ -24,7 +22,6 @@ Be concise. Maximum 10 lines. No code blocks — just instructions.
 
 
 async def reviewer_node(state: AgentState) -> Dict[str, Any]:
-    """Async reviewer: diagnoses failures without blocking the event loop."""
     code = state.get("generated_code", "")
     stderr = state.get("stderr", "")
     error_trace = state.get("error_trace", "")
@@ -33,13 +30,13 @@ async def reviewer_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"\n[Reviewer] Analyzing failure (iteration #{iteration})...", flush=True)
 
-    # Common fast-path: detect third-party import errors before calling LLM
     # Prefer error_trace: for "exit 0 but no output" stderr is empty and the
-    # explanation lives only in error_trace.
+    # explanation is only in error_trace.
     error_text = error_trace or stderr or ""
+
+    # Missing third-party imports are the most common failure, and the fix is always
+    # the same, so answer those directly without calling Gemini.
     if "ModuleNotFoundError" in error_text or "No module named" in error_text:
-        # Extract the module name for a precise fast fix
-        import re
         match = re.search(r"No module named '([^']+)'", error_text)
         module_name = match.group(1) if match else "the missing module"
         feedback = (

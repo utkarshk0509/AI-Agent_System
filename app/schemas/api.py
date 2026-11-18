@@ -1,18 +1,17 @@
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 
 
 class CodeExecutionRequest(BaseModel):
-    """Client request schema to start an autonomous analysis workflow."""
-    query: str = Field(..., description="The high-level user request or data analysis query")
-    max_iterations: Optional[int] = Field(default=5, ge=1, le=10, description="Upper bound on repair iterations")
+    query: str
+    max_iterations: Optional[int] = Field(default=5, ge=1, le=10)
 
 
 class CodeExecutionResponse(BaseModel):
-    """Final workflow response returned by FastAPI."""
-    status: str = Field(..., description="'completed', 'failed', or 'max_iterations_exceeded'")
+    status: str  # "completed", "failed" or "max_iterations_exceeded"
     query: str
-    answer: Optional[str] = Field(None, description="Direct answer to the query, synthesized from program output")
+    answer: Optional[str] = None
     plan: Optional[str] = None
     final_code: Optional[str] = None
     stdout: Optional[str] = None
@@ -21,4 +20,3 @@ class CodeExecutionResponse(BaseModel):
     iteration_count: int
     execution_logs: List[str] = Field(default_factory=list)
     review_feedback: Optional[str] = None
-

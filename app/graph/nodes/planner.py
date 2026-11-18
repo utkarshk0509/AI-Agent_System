@@ -1,9 +1,7 @@
-"""Planner Node: Breaks the user query into a structured Python implementation plan.
+"""Planner: turns the user's question into a short plan for the coder."""
 
-FIX: Now async — uses gemini_service.generate_text_async() so it doesn't block the event loop.
-"""
+from typing import Any, Dict
 
-from typing import Dict, Any
 from app.graph.state import AgentState
 from app.services.gemini_service import gemini_service
 
@@ -20,7 +18,6 @@ Guidelines:
 
 
 async def planner_node(state: AgentState) -> Dict[str, Any]:
-    """Async planner: calls Gemini API without blocking the event loop."""
     query = state.get("user_query", "")
     print(f"\n{'='*50}\n[Planner] Planning for query: {query[:60]}...\n{'='*50}", flush=True)
 

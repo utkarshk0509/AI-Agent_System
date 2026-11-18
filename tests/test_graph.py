@@ -1,8 +1,9 @@
 """End-to-End LangGraph orchestration tests."""
 
 import pytest
+
 from app.graph.workflow import create_code_workspace_graph
-from app.services.docker_sandbox import ExecutionResult
+from app.services.docker_sandbox import ExecutionResult, docker_sandbox
 
 
 @pytest.mark.asyncio
@@ -22,11 +23,9 @@ async def test_workflow_clean_success(mock_gemini_service, mock_docker_success, 
 @pytest.mark.asyncio
 async def test_workflow_repair_loop_success(monkeypatch, mock_gemini_service, sample_initial_state):
     """Test workflow that fails on iteration 1, routes to reviewer, fixes, and passes on iteration 2."""
-    from app.services import docker_sandbox
-    
     call_count = 0
 
-    async def fail_then_succeed(code, timeout_seconds=None, image_name=None):
+    async def fail_then_succeed(code, timeout_seconds=None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -59,7 +58,7 @@ async def test_workflow_repair_loop_success(monkeypatch, mock_gemini_service, sa
 async def test_workflow_circuit_breaker(mock_gemini_service, mock_docker_failure, sample_initial_state):
     """Test that recurring failure terminates safely once max_iterations is reached."""
     sample_initial_state["max_iterations"] = 3
-    
+
     graph = create_code_workspace_graph()
     final_state = await graph.ainvoke(sample_initial_state)
 

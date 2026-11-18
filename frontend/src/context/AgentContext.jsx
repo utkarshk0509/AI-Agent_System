@@ -3,6 +3,14 @@ import { checkBackendHealth, executeWorkspace, streamWorkspace, getBackendUrl, s
 
 const AgentContext = createContext();
 
+// Pick a log color from the message text
+function logLevel(message) {
+  const text = message.toLowerCase();
+  if (text.includes('fail') || text.includes('error')) return 'error';
+  if (text.includes('success')) return 'success';
+  return 'info';
+}
+
 export function AgentProvider({ children }) {
   const [backendUrl, setBackendUrlState] = useState(getBackendUrl());
   const [backendStatus, setBackendStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
@@ -27,36 +35,29 @@ export function AgentProvider({ children }) {
   const [answer, setAnswer] = useState(null);
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState(null);
-  const [startTime, setStartTime] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
 
   const abortControllerRef = useRef(null);
   const timerRef = useRef(null);
 
-  // Health check on mount and url change
   const refreshHealth = async (targetUrl = null) => {
     setBackendStatus('checking');
     const health = await checkBackendHealth(targetUrl || backendUrl);
-    if (health.status === 'healthy') {
-      setBackendStatus('online');
-      setHealthInfo(health);
-    } else {
-      setBackendStatus('offline');
-      setHealthInfo(health);
-    }
+    setBackendStatus(health.status === 'healthy' ? 'online' : 'offline');
+    setHealthInfo(health);
   };
 
+  // Check the backend on load, when the URL changes, and every 20s
   useEffect(() => {
     refreshHealth();
     const interval = setInterval(() => refreshHealth(), 20000);
     return () => clearInterval(interval);
   }, [backendUrl]);
 
-  // Elapsed timer tracking during run
+  // Elapsed time shown while a run is going
   useEffect(() => {
     if (status === 'running') {
       const start = Date.now();
-      setStartTime(start);
       timerRef.current = setInterval(() => {
         setElapsedTime(Math.floor((Date.now() - start) / 1000));
       }, 500);
@@ -141,107 +142,76 @@ export function AgentProvider({ children }) {
 
     if (executionMode === 'stream') {
       let finalEvent = null;
-      try {
-        await streamWorkspace(
-          { query: userQuery, max_iterations: iterLimit },
-          {
-            signal: abortControllerRef.current.signal,
-            onEvent: (event) => {
-              // Final event: carries the full result (or an error) and the real status
-              if (event.node === 'done') {
-                finalEvent = event;
-                if (event.error) {
-                  setError(event.error);
-                  addLog(`Stream error: ${event.error}`, 'system', 'error');
-                  return;
-                }
-                applyResult(event.result || {});
-                return;
-              }
-
+      // streamWorkspace catches its own errors and reports them through onError
+      await streamWorkspace(
+        { query: userQuery, max_iterations: iterLimit },
+        {
+          signal: abortControllerRef.current.signal,
+          onEvent: (event) => {
+            // The last event carries the full result (or an error) and the real status
+            if (event.node === 'done') {
+              finalEvent = event;
               if (event.error) {
                 setError(event.error);
                 addLog(`Stream error: ${event.error}`, 'system', 'error');
-                return;
-              }
-
-              // Artifacts produced by this node (plan, code, stdout, ...)
-              const d = event.data || {};
-              if ('plan' in d) setPlan(d.plan);
-              if ('generated_code' in d) setGeneratedCode(d.generated_code);
-              if ('stdout' in d) setStdout(d.stdout);
-              if ('stderr' in d) setStderr(d.stderr);
-              if ('exit_code' in d) setExitCode(d.exit_code);
-              if ('review_feedback' in d) setReviewFeedback(d.review_feedback);
-              if ('final_result' in d && d.final_result) setAnswer(d.final_result);
-
-              if (event.node && event.node !== 'system') {
-                setActiveNode(event.node);
-                setVisitedNodes((prev) => (prev.includes(event.node) ? prev : [...prev, event.node]));
-              }
-              if (event.iteration !== undefined && event.iteration !== null) {
-                setIterationCount(event.iteration);
-              }
-
-              // Append event logs
-              if (event.logs && Array.isArray(event.logs)) {
-                event.logs.forEach((log) => {
-                  const level = log.toLowerCase().includes('fail') || log.toLowerCase().includes('error')
-                    ? 'error'
-                    : log.toLowerCase().includes('success')
-                    ? 'success'
-                    : 'info';
-                  addLog(log, event.node || 'agent', level);
-                });
-              }
-            },
-            onComplete: async () => {
-              setActiveNode(null);
-              const finalStatus = finalEvent?.status;
-              if (finalStatus === 'completed') {
-                setStatus('completed');
-                addLog('Finished.', 'system', 'success');
               } else {
-                setStatus('error');
-                const reason =
-                  finalStatus === 'max_iterations_exceeded'
-                    ? 'Stopped after reaching the retry limit without working code.'
-                    : finalEvent?.error || 'Pipeline ended without producing an answer.';
-                setError(reason);
-                addLog(reason, 'system', 'error');
+                applyResult(event.result || {});
               }
-            },
-            onError: (err) => {
+              return;
+            }
+
+            // Whatever this node produced (plan, code, stdout, ...)
+            const d = event.data || {};
+            if ('plan' in d) setPlan(d.plan);
+            if ('generated_code' in d) setGeneratedCode(d.generated_code);
+            if ('stdout' in d) setStdout(d.stdout);
+            if ('stderr' in d) setStderr(d.stderr);
+            if ('exit_code' in d) setExitCode(d.exit_code);
+            if ('review_feedback' in d) setReviewFeedback(d.review_feedback);
+            if (d.final_result) setAnswer(d.final_result);
+
+            setActiveNode(event.node);
+            setVisitedNodes((prev) => (prev.includes(event.node) ? prev : [...prev, event.node]));
+            if (event.iteration != null) {
+              setIterationCount(event.iteration);
+            }
+
+            (event.logs || []).forEach((log) => addLog(log, event.node, logLevel(log)));
+          },
+          onComplete: () => {
+            setActiveNode(null);
+            const finalStatus = finalEvent?.status;
+            if (finalStatus === 'completed') {
+              setStatus('completed');
+              addLog('Finished.', 'system', 'success');
+            } else {
               setStatus('error');
-              setActiveNode(null);
-              setError(err.message);
-              addLog(`Failed: ${err.message}`, 'system', 'error');
-            },
-          }
-        );
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          setStatus('error');
-          setError(err.message);
-          addLog(`Error encountered: ${err.message}`, 'system', 'error');
+              const reason =
+                finalStatus === 'max_iterations_exceeded'
+                  ? 'Stopped after reaching the retry limit without working code.'
+                  : finalEvent?.error || 'Pipeline ended without producing an answer.';
+              setError(reason);
+              addLog(reason, 'system', 'error');
+            }
+          },
+          onError: (err) => {
+            setStatus('error');
+            setActiveNode(null);
+            setError(err.message);
+            addLog(`Failed: ${err.message}`, 'system', 'error');
+          },
         }
-      }
+      );
     } else {
-      // Synchronous fallback
+      // Wait for the single final response
       try {
         const result = await executeWorkspace(
           { query: userQuery, max_iterations: iterLimit },
-          { signal: abortControllerRef.current.signal }
+          abortControllerRef.current.signal
         );
 
         applyResult(result);
-
-        if (result.execution_logs && Array.isArray(result.execution_logs)) {
-          result.execution_logs.forEach((log) => {
-            const level = log.includes('SUCCESS') ? 'success' : log.includes('FAILED') ? 'error' : 'info';
-            addLog(log, 'orchestrator', level);
-          });
-        }
+        (result.execution_logs || []).forEach((log) => addLog(log, 'orchestrator', logLevel(log)));
 
         setStatus(result.status === 'completed' ? 'completed' : 'error');
         setActiveNode(null);

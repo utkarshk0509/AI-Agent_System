@@ -1,27 +1,22 @@
-"""FastAPI Entry Point for the Autonomous Code & Analysis Workspace.
+"""FastAPI app: runs the agent graph and streams its progress."""
 
-Exposes REST endpoints to trigger the LangGraph orchestration, stream agent
-telemetry, and query execution health.
-"""
-
+import json
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import json
 
 from app.core.config import settings
-from app.schemas.api import CodeExecutionRequest, CodeExecutionResponse
 from app.graph.workflow import app_graph
+from app.schemas.api import CodeExecutionRequest, CodeExecutionResponse
 from app.services.docker_sandbox import docker_sandbox
-from app.services.gemini_service import gemini_service, GeminiUnavailableError
+from app.services.gemini_service import GeminiUnavailableError, gemini_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan context for resource verification."""
-    # Pre-flight check: Verify Docker daemon connectivity
+    # Warn at startup instead of failing on the first request
     if not docker_sandbox.client:
         print("[WARNING] Docker daemon is not connected. Execution node will use subprocess fallback (no container isolation).")
     else:
@@ -33,12 +28,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Multi-agent cyclic orchestration system for automated code generation, sandboxed execution, and self-debugging.",
+    description="Plans, writes, runs and fixes Python code to answer a question.",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-# Standard CORS Middleware for frontend dashboard integration
+# The React frontend runs on a different port, so allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,7 +45,6 @@ app.add_middleware(
 
 @app.get("/", tags=["System"])
 async def root():
-    """Root landing page directing users to Swagger UI and API endpoints."""
     return {
         "app": settings.APP_NAME,
         "status": "online",
@@ -65,12 +59,10 @@ async def root():
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint to probe container and service status."""
     docker_up = docker_sandbox.client is not None
     return {
         "status": "healthy",
         "docker_available": docker_up,
-        # execution_mode tells the frontend which sandbox is active
         "execution_mode": "docker" if docker_up else "subprocess",
         "gemini_model": settings.GEMINI_MODEL,
         "gemini_fallback_models": settings.gemini_model_chain[1:],
@@ -78,7 +70,7 @@ async def health_check():
     }
 
 
-def _initial_state(query: str, max_iterations: int | None, first_log: str) -> dict:
+def initial_state(query: str, max_iterations: int | None, first_log: str) -> dict:
     return {
         "user_query": query,
         "plan": None,
@@ -96,7 +88,7 @@ def _initial_state(query: str, max_iterations: int | None, first_log: str) -> di
     }
 
 
-def _final_status(state: dict) -> str:
+def final_status(state: dict) -> str:
     if state.get("exit_code") == 0 and state.get("final_result"):
         return "completed"
     if state.get("iteration_count", 0) >= state.get("max_iterations", 5):
@@ -104,9 +96,9 @@ def _final_status(state: dict) -> str:
     return "failed"
 
 
-def _build_response(query: str, state: dict) -> CodeExecutionResponse:
+def build_response(query: str, state: dict) -> CodeExecutionResponse:
     return CodeExecutionResponse(
-        status=_final_status(state),
+        status=final_status(state),
         query=query,
         answer=state.get("final_result"),
         plan=state.get("plan"),
@@ -120,8 +112,8 @@ def _build_response(query: str, state: dict) -> CodeExecutionResponse:
     )
 
 
-# State keys forwarded to the client in each SSE event when a node updates them
-_STREAMED_KEYS = (
+# State keys sent to the client in each SSE event when a node updates them
+STREAMED_KEYS = (
     "plan", "generated_code", "stdout", "stderr", "exit_code",
     "review_feedback", "final_result",
 )
@@ -129,16 +121,12 @@ _STREAMED_KEYS = (
 
 @app.post("/api/v1/workspace/execute", response_model=CodeExecutionResponse, tags=["Orchestration"])
 async def execute_query(payload: CodeExecutionRequest):
-    """Executes the full LangGraph multi-agent loop to solve a data analysis query.
-
-    The graph iteratively plans, codes, executes in the sandbox, self-corrects
-    until success or max_iterations, then synthesizes a direct answer.
-    """
-    initial_state = _initial_state(
+    """Run the whole graph and return the final result in one response."""
+    start_state = initial_state(
         payload.query, payload.max_iterations, "[System] Workspace execution initiated."
     )
     try:
-        final_state = await app_graph.ainvoke(initial_state)
+        final_state = await app_graph.ainvoke(start_state)
     except GeminiUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     except Exception as exc:
@@ -146,43 +134,41 @@ async def execute_query(payload: CodeExecutionRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Workflow orchestration error: {exc}",
         )
-    return _build_response(payload.query, final_state)
+    return build_response(payload.query, final_state)
 
 
 @app.post("/api/v1/workspace/stream", tags=["Orchestration"])
 async def stream_query(payload: CodeExecutionRequest):
-    """Streams step-by-step agent transitions using Server-Sent Events (SSE).
+    """Stream each node's update as a Server-Sent Event.
 
-    Each event carries the node name, status, logs and any artifacts that node
-    produced (plan, code, stdout, ...). The stream ends with a single
-    ``{"node": "done", "result": <CodeExecutionResponse>}`` event so the client
-    always receives the final answer.
+    The last event is always {"node": "done", "result": ...} with the same
+    shape as the /execute response, so the client gets the final answer.
     """
-    initial_state = _initial_state(
+    start_state = initial_state(
         payload.query, payload.max_iterations, "[System] Streaming started."
     )
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        # Accumulate state locally (stream_mode="updates" yields only deltas)
-        state = dict(initial_state)
+    async def event_generator():
+        # astream() only yields what each node changed, so build up the full state here
+        state = dict(start_state)
         try:
-            async for event in app_graph.astream(initial_state):
+            async for event in app_graph.astream(start_state):
                 for node_name, node_update in event.items():
                     node_update = node_update or {}
-                    for k, v in node_update.items():
-                        if k == "execution_logs":
-                            state[k] = state.get(k, []) + list(v)
+                    for key, value in node_update.items():
+                        if key == "execution_logs":
+                            state[key] = state.get(key, []) + list(value)
                         else:
-                            state[k] = v
+                            state[key] = value
                     event_data = {
                         "node": node_name,
                         "status": node_update.get("status"),
                         "logs": node_update.get("execution_logs", []),
                         "iteration": node_update.get("iteration_count"),
-                        "data": {k: node_update[k] for k in _STREAMED_KEYS if k in node_update},
+                        "data": {k: node_update[k] for k in STREAMED_KEYS if k in node_update},
                     }
                     yield f"data: {json.dumps(event_data)}\n\n"
-            final = _build_response(payload.query, state).model_dump()
+            final = build_response(payload.query, state).model_dump()
             yield f"data: {json.dumps({'node': 'done', 'status': final['status'], 'result': final})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'node': 'done', 'status': 'error', 'error': str(e)})}\n\n"

@@ -1,11 +1,14 @@
 """Tests for isolated agent nodes."""
 
-from app.graph.nodes.planner import planner_node
-from app.graph.nodes.coder import coder_node
-from app.graph.nodes.executor import executor_node
-from app.graph.nodes.reviewer import reviewer_node
-from app.graph.state import AgentState
 import pytest
+
+from app.graph.nodes.answer import answer_node
+from app.graph.nodes.coder import coder_node, extract_code
+from app.graph.nodes.executor import executor_node
+from app.graph.nodes.planner import planner_node
+from app.graph.nodes.reviewer import reviewer_node
+from app.services.docker_sandbox import ExecutionResult, docker_sandbox
+from app.services.gemini_service import GeminiUnavailableError, gemini_service
 
 
 @pytest.mark.asyncio
@@ -40,20 +43,16 @@ async def test_reviewer_node(mock_gemini_service, sample_initial_state):
     sample_initial_state["generated_code"] = "print(undefined_var)"
     sample_initial_state["stderr"] = "NameError: name 'undefined_var' is not defined"
     sample_initial_state["exit_code"] = 1
-    
+
     result = await reviewer_node(sample_initial_state)
     assert "review_feedback" in result
     assert result["status"] == "review_completed"
 
 
-
 @pytest.mark.asyncio
 async def test_executor_node_empty_output_is_failure(monkeypatch, sample_initial_state):
     """exit 0 with no stdout produced no answer and must not count as success."""
-    from app.services import docker_sandbox
-    from app.services.docker_sandbox import ExecutionResult
-
-    async def fake(code, timeout_seconds=None, image_name=None):
+    async def fake(code, timeout_seconds=None):
         return ExecutionResult(stdout="", stderr="", exit_code=0)
 
     monkeypatch.setattr(docker_sandbox, "execute_code_async", fake)
@@ -66,10 +65,6 @@ async def test_executor_node_empty_output_is_failure(monkeypatch, sample_initial
 
 @pytest.mark.asyncio
 async def test_answer_node_falls_back_to_stdout(monkeypatch, sample_initial_state):
-    from app.graph.nodes.answer import answer_node
-    from app.services import gemini_service
-    from app.services.gemini_service import GeminiUnavailableError
-
     async def boom(*a, **k):
         raise GeminiUnavailableError("down")
 
@@ -78,3 +73,8 @@ async def test_answer_node_falls_back_to_stdout(monkeypatch, sample_initial_stat
     result = await answer_node(sample_initial_state)
     assert result["final_result"] == "42"
     assert result["status"] == "completed"
+
+
+def test_extract_code_strips_fences():
+    assert extract_code("Here you go:\n```python\nprint(1)\n```\nDone.") == "print(1)"
+    assert extract_code("  print(2)  ") == "print(2)"

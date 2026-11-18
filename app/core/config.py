@@ -1,16 +1,12 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Production application settings managed via Pydantic Settings."""
-
     APP_NAME: str = "Autonomous Code & Analysis Workspace"
-    DEBUG: bool = False
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
 
-    # Gemini LLM Configuration
+    # Gemini
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-3.8-flash"
     # Comma-separated models tried in order when the primary model is overloaded
@@ -22,24 +18,26 @@ class Settings(BaseSettings):
 
     @property
     def gemini_model_chain(self) -> list[str]:
-        chain = [self.GEMINI_MODEL] + [
-            m.strip() for m in self.GEMINI_FALLBACK_MODELS.split(",") if m.strip()
-        ]
-        return list(dict.fromkeys(chain))  # dedupe, keep order
+        chain = [self.GEMINI_MODEL]
+        for model in self.GEMINI_FALLBACK_MODELS.split(","):
+            model = model.strip()
+            if model and model not in chain:
+                chain.append(model)
+        return chain
 
-    # Docker Sandbox Configuration
+    # Docker sandbox
     DOCKER_SANDBOX_IMAGE: str = "python:3.11-slim"
     EXECUTION_TIMEOUT_SECONDS: int = 30
-    MAX_CONTAINER_MEMORY: str = "512m"  # Hard memory limit to prevent OOM on host
-    CPU_QUOTA_MICROS: int = 100000       # 1 CPU core equivalent
-    SANDBOX_NETWORK_MODE: str = "none"   # Prevent SSRF and network access unless whitelisted
+    MAX_CONTAINER_MEMORY: str = "512m"
+    CPU_QUOTA_MICROS: int = 100000  # 100000 = one CPU core
+    SANDBOX_NETWORK_MODE: str = "none"  # no network access for generated code
     # When the backend itself runs in a container, host paths can't be bind-mounted into
     # sandbox containers. Set this to a named Docker volume that is also mounted in the
     # backend at SANDBOX_WORK_DIR; scripts are then handed over through that volume.
     SANDBOX_SHARED_VOLUME: str = ""
     SANDBOX_WORK_DIR: str = "/sandbox-work"
 
-    # Guardrails
+    # Max code -> run -> fix attempts per query
     MAX_ITERATIONS: int = 5
 
     model_config = SettingsConfigDict(
@@ -50,4 +48,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

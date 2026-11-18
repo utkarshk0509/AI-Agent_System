@@ -1,102 +1,75 @@
-"""Docker Sandbox Execution Service.
+"""Runs generated Python code in a throwaway Docker container.
 
-Key fixes applied:
-- execute_code_async(): async wrapper using asyncio.to_thread() to unblock event loop.
-- Image existence pre-check: warns clearly if image is missing (avoids silent 5-min pulls).
-- Subprocess fallback: when Docker is not running, code runs via local subprocess so the
-  app works without Docker at all (users only need Python installed).
-- All blocking calls (containers.run, container.wait) run in thread pool.
+If Docker isn't running, the code runs as a normal local subprocess instead,
+so the app still works with just Python installed (but without isolation).
 """
 
+import asyncio
 import os
 import shutil
-import tempfile
-import asyncio
 import subprocess
 import sys
-from typing import Optional
+import tempfile
 from dataclasses import dataclass
-from app.core.config import settings
+from typing import Optional
 
-try:
-    import docker
-    from docker.errors import DockerException, ImageNotFound
-    DOCKER_AVAILABLE = True
-except ImportError:
-    DOCKER_AVAILABLE = False
+from docker.errors import DockerException, ImageNotFound
+
+import docker
+from app.core.config import settings
 
 
 @dataclass
 class ExecutionResult:
-    """Encapsulates the raw output from a sandboxed container run."""
     stdout: str
     stderr: str
     exit_code: int
     error_trace: Optional[str] = None
 
 
+def timeout_result(timeout: int) -> ExecutionResult:
+    return ExecutionResult(
+        stdout="",
+        stderr=f"Execution timed out after {timeout}s.",
+        exit_code=124,
+        error_trace=f"TimeoutError: exceeded {timeout}s limit.",
+    )
+
+
 class DockerSandbox:
-    """Manages ephemeral container lifecycles for secure code execution."""
-
     def __init__(self):
-        if DOCKER_AVAILABLE:
-            try:
-                self.client = docker.from_env()
-                print("[DockerSandbox] Docker daemon connected successfully.", flush=True)
-            except Exception as e:
-                self.client = None
-                print(f"[DockerSandbox] Docker unavailable: {e}", flush=True)
-        else:
+        try:
+            self.client = docker.from_env()
+            print("[DockerSandbox] Docker daemon connected successfully.", flush=True)
+        except Exception as e:
             self.client = None
+            print(f"[DockerSandbox] Docker unavailable: {e}", flush=True)
 
-    async def execute_code_async(
-        self,
-        code: str,
-        timeout_seconds: Optional[int] = None,
-        image_name: Optional[str] = None,
-    ) -> ExecutionResult:
-        """
-        Async wrapper: runs Docker SDK (blocking I/O) in a thread pool.
-        
-        FIX: Without this, container.wait() blocks the FastAPI event loop for the
-        entire execution duration, making the server appear frozen.
-        """
-        return await asyncio.to_thread(
-            self.execute_code, code, timeout_seconds, image_name
-        )
+    async def execute_code_async(self, code: str, timeout_seconds: Optional[int] = None) -> ExecutionResult:
+        # The Docker SDK calls block, so run them in a thread. Otherwise the whole
+        # FastAPI server freezes while a container is running.
+        return await asyncio.to_thread(self.execute_code, code, timeout_seconds)
 
-    def execute_code(
-        self,
-        code: str,
-        timeout_seconds: Optional[int] = None,
-        image_name: Optional[str] = None,
-    ) -> ExecutionResult:
-        """
-        Runs code in an isolated, ephemeral Docker container.
+    def execute_code(self, code: str, timeout_seconds: Optional[int] = None) -> ExecutionResult:
+        """Run the code in a locked-down container.
 
-        Security Safeguards:
-          - Read-only script mount (:ro)
-          - 512MB RAM ceiling
-          - 1 CPU core quota
-          - network_mode="none" (no SSRF / exfiltration)
-          - PID limit 100 (no fork bombs)
-          - no-new-privileges security opt
-          - Guaranteed cleanup via finally block
+        The container has no network, limited memory/CPU, at most 100 processes,
+        a read-only mount for the script and no-new-privileges. It is always
+        removed afterwards.
         """
         timeout = timeout_seconds or settings.EXECUTION_TIMEOUT_SECONDS
-        image = image_name or settings.DOCKER_SANDBOX_IMAGE
+        image = settings.DOCKER_SANDBOX_IMAGE
 
         print(f"  [Docker] Preparing sandbox (image={image}, timeout={timeout}s)...", flush=True)
 
         if not self.client:
             print("  [Docker] Not connected — using subprocess fallback.", flush=True)
-            return self._subprocess_execution_fallback(code, timeout)
+            return self.run_in_subprocess(code, timeout)
 
-        # FIX: Pre-check if the image exists locally.
-        # If missing, containers.run() will silently pull it (takes minutes and freezes the request).
+        # containers.run() would silently pull a missing image, which can take minutes
+        # and leaves the request hanging. Fail fast with a clear message instead.
         try:
             self.client.images.get(image)
-            print(f"  [Docker] Image '{image}' found locally.", flush=True)
         except ImageNotFound:
             return ExecutionResult(
                 stdout="",
@@ -109,31 +82,26 @@ class DockerSandbox:
                 exit_code=-2,
                 error_trace=f"ImageNotFound: '{image}' not available locally. Pull it first.",
             )
-        except DockerException as de:
-            return ExecutionResult(
-                stdout="", stderr=str(de), exit_code=-1, error_trace=str(de)
-            )
+        except DockerException as e:
+            return ExecutionResult(stdout="", stderr=str(e), exit_code=-1, error_trace=str(e))
 
-        shared_volume = settings.SANDBOX_SHARED_VOLUME
-        if shared_volume:
+        if settings.SANDBOX_SHARED_VOLUME:
             # Backend runs in a container: hand the script over through a named volume.
             os.makedirs(settings.SANDBOX_WORK_DIR, exist_ok=True)
             temp_dir = tempfile.mkdtemp(prefix="agent_sandbox_", dir=settings.SANDBOX_WORK_DIR)
             os.chmod(temp_dir, 0o755)  # readable by a non-root sandbox user
             sandbox_dir = f"/sandbox/{os.path.basename(temp_dir)}"
-            volumes = {shared_volume: {"bind": "/sandbox", "mode": "ro"}}
+            volumes = {settings.SANDBOX_SHARED_VOLUME: {"bind": "/sandbox", "mode": "ro"}}
         else:
             temp_dir = tempfile.mkdtemp(prefix="agent_sandbox_")
             sandbox_dir = "/sandbox"
             volumes = {temp_dir: {"bind": "/sandbox", "mode": "ro"}}
-        script_path = os.path.join(temp_dir, "script.py")
-        container = None
 
+        container = None
         try:
-            with open(script_path, "w", encoding="utf-8") as f:
+            with open(os.path.join(temp_dir, "script.py"), "w", encoding="utf-8") as f:
                 f.write(code)
 
-            print(f"  [Docker] Launching container...", flush=True)
             container = self.client.containers.run(
                 image=image,
                 command=["python", f"{sandbox_dir}/script.py"],
@@ -149,22 +117,17 @@ class DockerSandbox:
                 stdout=True,
                 stderr=True,
             )
-
             print(f"  [Docker] Container {container.short_id} running...", flush=True)
+
             try:
-                wait_result = container.wait(timeout=timeout)
-                exit_code = wait_result.get("StatusCode", 1)
-            except Exception as wait_err:
+                exit_code = container.wait(timeout=timeout).get("StatusCode", 1)
+            except Exception:
+                # wait() raises when the timeout is hit
                 try:
                     container.kill()
                 except Exception:
                     pass
-                return ExecutionResult(
-                    stdout="",
-                    stderr=f"Execution timed out after {timeout}s.",
-                    exit_code=124,
-                    error_trace=f"TimeoutError: exceeded {timeout}s limit.",
-                )
+                return timeout_result(timeout)
 
             stdout = container.logs(stdout=True, stderr=False).decode("utf-8", errors="replace")
             stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="replace")
@@ -177,10 +140,9 @@ class DockerSandbox:
                 exit_code=exit_code,
                 error_trace=stderr if exit_code != 0 else None,
             )
-
-        except DockerException as de:
+        except DockerException as e:
             return ExecutionResult(
-                stdout="", stderr=f"Docker runtime error: {de}", exit_code=-1, error_trace=str(de)
+                stdout="", stderr=f"Docker runtime error: {e}", exit_code=-1, error_trace=str(e)
             )
         finally:
             if container:
@@ -188,42 +150,26 @@ class DockerSandbox:
                     container.remove(force=True)
                 except Exception:
                     pass
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def _subprocess_execution_fallback(self, code: str, timeout: int) -> ExecutionResult:
-        """
-        Runs user code as a local subprocess when Docker is unavailable.
+    def run_in_subprocess(self, code: str, timeout: int) -> ExecutionResult:
+        """Fallback when Docker isn't available.
 
-        This lets the app work without Docker Desktop installed — anyone with
-        Python can run the backend and get real code execution results.
-
-        Security note: no container isolation here. Code runs as the current OS
-        user. Only use in trusted / dev environments or when Docker is absent.
+        There is no isolation here: the code runs as the current OS user.
+        Only use it on your own machine.
         """
         print("  [Subprocess] Executing code locally (no Docker)...", flush=True)
 
-        # Write code to a temp file (avoids shell injection vs -c flag)
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False, encoding="utf-8"
-            ) as f:
-                f.write(code)
-                tmp_path = f.name
-        except Exception as e:
-            return ExecutionResult(
-                stdout="", stderr=f"Could not write temp file: {e}",
-                exit_code=-1, error_trace=str(e),
-            )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(code)
+            script_path = f.name
 
-        # Use the interpreter running this server (a bare "python" on Windows may
-        # resolve to the Microsoft Store stub or a different install), and force
-        # UTF-8 I/O so printing non-ASCII (e.g. "φ", "✓") doesn't raise
-        # UnicodeEncodeError under the Windows cp1252 default.
+        # sys.executable instead of "python": on Windows a bare "python" can hit the
+        # Microsoft Store stub. UTF-8 env vars stop non-ASCII prints from crashing on cp1252.
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         try:
             proc = subprocess.run(
-                [sys.executable or "python", tmp_path],
+                [sys.executable, script_path],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -232,38 +178,23 @@ class DockerSandbox:
                 env=env,
                 cwd=tempfile.gettempdir(),
             )
-            status = "SUCCESS" if proc.returncode == 0 else f"FAILED (exit={proc.returncode})"
-            print(f"  [Subprocess] {status}", flush=True)
-            return ExecutionResult(
-                stdout=proc.stdout,
-                stderr=proc.stderr,
-                exit_code=proc.returncode,
-                error_trace=proc.stderr if proc.returncode != 0 else None,
-            )
         except subprocess.TimeoutExpired:
-            return ExecutionResult(
-                stdout="",
-                stderr=f"Execution timed out after {timeout}s.",
-                exit_code=124,
-                error_trace=f"TimeoutError: exceeded {timeout}s limit.",
-            )
+            return timeout_result(timeout)
         except Exception as e:
-            return ExecutionResult(
-                stdout="", stderr=str(e), exit_code=-1, error_trace=str(e)
-            )
+            return ExecutionResult(stdout="", stderr=str(e), exit_code=-1, error_trace=str(e))
         finally:
             try:
-                os.unlink(tmp_path)
-            except Exception:
+                os.unlink(script_path)
+            except OSError:
                 pass
 
-    def _mock_execution_fallback(self, code: str) -> ExecutionResult:
-        """Legacy mock — kept for backward compatibility in tests."""
+        status = "SUCCESS" if proc.returncode == 0 else f"FAILED (exit={proc.returncode})"
+        print(f"  [Subprocess] {status}", flush=True)
         return ExecutionResult(
-            stdout="[MOCK MODE — Docker not connected]\nCode received and accepted.",
-            stderr="",
-            exit_code=0,
-            error_trace=None,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            exit_code=proc.returncode,
+            error_trace=proc.stderr if proc.returncode != 0 else None,
         )
 
 

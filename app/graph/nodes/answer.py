@@ -1,12 +1,11 @@
-"""Answer Node: turns the successful program output into a direct answer.
+"""Answer: turns the script's raw output into a direct answer to the question.
 
-Raw stdout is often a dump of numbers or JSON. This node asks Gemini to answer
-the user's original question using ONLY that output, so the user gets an actual
-answer. If the LLM call fails, the raw stdout is returned unchanged so a
-successful run never loses its result.
+If the Gemini call fails, the raw stdout is returned instead so a successful
+run never loses its result.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
+
 from app.graph.state import AgentState
 from app.services.gemini_service import gemini_service
 
@@ -18,7 +17,7 @@ You answer the user's question using ONLY the program output provided.
 - Do not invent values that are not in the output. Do not describe the code.
 """
 
-_MAX_OUTPUT_CHARS = 12_000
+MAX_OUTPUT_CHARS = 12_000
 
 
 async def answer_node(state: AgentState) -> Dict[str, Any]:
@@ -26,8 +25,8 @@ async def answer_node(state: AgentState) -> Dict[str, Any]:
     stdout = state.get("stdout") or ""
     print("\n[Answer] Synthesizing final answer...", flush=True)
 
-    clipped = stdout[:_MAX_OUTPUT_CHARS]
-    if len(stdout) > _MAX_OUTPUT_CHARS:
+    clipped = stdout[:MAX_OUTPUT_CHARS]
+    if len(stdout) > MAX_OUTPUT_CHARS:
         clipped += "\n...[output truncated]"
 
     prompt = f"User question:\n{query}\n\nProgram output:\n```\n{clipped}\n```"

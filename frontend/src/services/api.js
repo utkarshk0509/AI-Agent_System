@@ -1,7 +1,4 @@
-/**
- * API Service for connecting to the Autonomous Code & Analysis Workspace Backend.
- * Supports synchronous execution, live Server-Sent Events (SSE) streaming, and health checks.
- */
+// Calls to the FastAPI backend.
 
 export const getBackendUrl = () => {
   return localStorage.getItem('agentic_backend_url') || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
@@ -9,24 +6,25 @@ export const getBackendUrl = () => {
 
 export const setBackendUrl = (url) => {
   if (url) {
-    const cleanUrl = url.replace(/\/+$/, '');
-    localStorage.setItem('agentic_backend_url', cleanUrl);
+    localStorage.setItem('agentic_backend_url', url.replace(/\/+$/, ''));
   } else {
     localStorage.removeItem('agentic_backend_url');
   }
 };
 
-/**
- * Probes the backend /health endpoint to verify Docker connectivity & model availability.
- */
-export async function checkBackendHealth(customUrl = null) {
-  const baseUrl = customUrl || getBackendUrl();
+// FastAPI puts the error message in "detail"
+async function readError(response, fallback) {
   try {
-    const res = await fetch(`${baseUrl}/health`, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
+    const body = await response.json();
+    return body.detail || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function checkBackendHealth(baseUrl = getBackendUrl()) {
+  try {
+    const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) {
       throw new Error(`Health check returned status ${res.status}`);
     }
@@ -41,50 +39,31 @@ export async function checkBackendHealth(customUrl = null) {
   }
 }
 
-/**
- * Executes an agent workspace query synchronously via POST /api/v1/workspace/execute
- */
-export async function executeWorkspace(payload, options = {}) {
-  const baseUrl = options.customUrl || getBackendUrl();
-  const response = await fetch(`${baseUrl}/api/v1/workspace/execute`, {
+// Runs the whole workflow and waits for the final result.
+export async function executeWorkspace(payload, signal) {
+  const response = await fetch(`${getBackendUrl()}/api/v1/workspace/execute`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: payload.query,
       max_iterations: payload.max_iterations || 5,
     }),
-    signal: options.signal,
+    signal,
   });
 
   if (!response.ok) {
-    let errorDetail = `Execution failed with HTTP ${response.status}`;
-    try {
-      const errJson = await response.json();
-      errorDetail = errJson.detail || errorDetail;
-    } catch (_) {}
-    throw new Error(errorDetail);
+    throw new Error(await readError(response, `Execution failed with HTTP ${response.status}`));
   }
-
   return await response.json();
 }
 
-/**
- * Connects to the SSE streaming endpoint POST /api/v1/workspace/stream
- * Processes streaming events (planner -> coder -> executor -> reviewer) in real-time.
- */
-export async function streamWorkspace(payload, callbacks = {}) {
-  const { onEvent, onError, onComplete, signal, customUrl } = callbacks;
-  const baseUrl = customUrl || getBackendUrl();
-
+// Reads the Server-Sent Events stream and calls onEvent for each event.
+// EventSource only supports GET, so the stream is read by hand from fetch().
+export async function streamWorkspace(payload, { onEvent, onError, onComplete, signal }) {
   try {
-    const response = await fetch(`${baseUrl}/api/v1/workspace/stream`, {
+    const response = await fetch(`${getBackendUrl()}/api/v1/workspace/stream`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: payload.query,
         max_iterations: payload.max_iterations || 5,
@@ -93,12 +72,7 @@ export async function streamWorkspace(payload, callbacks = {}) {
     });
 
     if (!response.ok) {
-      let errorDetail = `Stream request failed with HTTP ${response.status}`;
-      try {
-        const errJson = await response.json();
-        errorDetail = errJson.detail || errorDetail;
-      } catch (_) {}
-      throw new Error(errorDetail);
+      throw new Error(await readError(response, `Stream request failed with HTTP ${response.status}`));
     }
 
     const reader = response.body.getReader();
@@ -110,34 +84,27 @@ export async function streamWorkspace(payload, callbacks = {}) {
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop(); // Keep incomplete chunk in buffer
+      // Events are separated by a blank line. The last piece may be incomplete, so keep it.
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop();
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data:')) {
-          try {
-            const rawJson = trimmed.slice(5).trim();
-            if (rawJson) {
-              const parsed = JSON.parse(rawJson);
-              if (onEvent) onEvent(parsed);
-            }
-          } catch (e) {
-            console.warn('Failed to parse SSE line:', line, e);
-          }
+      for (const chunk of chunks) {
+        const line = chunk.trim();
+        if (!line.startsWith('data:')) continue;
+        const json = line.slice(5).trim();
+        if (!json) continue;
+        try {
+          onEvent(JSON.parse(json));
+        } catch (e) {
+          console.warn('Failed to parse SSE line:', line, e);
         }
       }
     }
 
-    if (onComplete) onComplete();
+    onComplete();
   } catch (err) {
-    if (err.name === 'AbortError') {
-      console.log('Stream aborted by user.');
-      if (onEvent) onEvent({ node: 'system', status: 'aborted', logs: ['[System] Execution halted by user.'] });
-    } else {
-      if (onError) onError(err);
-      else console.error('Streaming error:', err);
-    }
+    // Stopped by the user: abortRun() already updated the UI
+    if (err.name === 'AbortError') return;
+    onError(err);
   }
 }
-

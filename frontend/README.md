@@ -1,42 +1,37 @@
-# Autonomous Code Workspace — React Frontend
+# Frontend
 
-Production-ready, highly optimized frontend dashboard for the Autonomous Code & Analysis Workspace.
+React app for the Code Workspace backend. You type a question, it calls the
+backend, and shows the plan, generated code, program output and final answer.
 
-Built with:
-- **React 18** + **Vite**
-- **React Router v6**
-- **Tailwind CSS** (Dark cyber-theme)
-- **Framer Motion** (Smooth transitions & staggered telemetry)
-- **Lucide React** (Icons)
+Built with React 18, Vite, React Router, Tailwind CSS and lucide-react icons.
 
----
+## Running it
 
-## Getting Started
-
-### 1. Install Dependencies
 ```bash
 cd frontend
 npm install
-```
-
-### 2. Configure Environment
-```bash
-cp .env.example .env
-# By default, VITE_BACKEND_URL points to http://localhost:8000
-```
-
-### 3. Start Development Server
-```bash
 npm run dev
 ```
 
-The application will be live at: [http://localhost:5173](http://localhost:5173)
+Open http://localhost:5173. The backend needs to be running on http://localhost:8000.
 
----
+To point at a different backend, either copy `.env.example` to `.env` and change
+`VITE_BACKEND_URL`, or change the address on the Settings page (saved in the
+browser's localStorage).
 
-## Features
-- **Real-Time Streaming (SSE):** Consumes live Server-Sent Events from `/api/v1/workspace/stream` with real-time log appending and automatic reconnection.
-- **Visual State Graph:** Live pipeline indicator (`planner` -> `coder` -> `executor` -> `reviewer`) with self-healing indicators.
-- **Multi-Tab Terminal:** Monospace dark-mode console with live logs, generated Python code viewer, Docker stdout/stderr separation, and reviewer diagnosis instructions.
-- **Dynamic Configuration:** Change backend URL on the fly in the Settings view without rebuilding.
+## What's in `src/`
 
+- `services/api.js` – `fetch` calls to `/health`, `/api/v1/workspace/execute` and
+  `/api/v1/workspace/stream`. The stream endpoint is a POST, so the Server-Sent
+  Events are read manually from the response body instead of using `EventSource`.
+- `context/AgentContext.jsx` – holds all the run state (status, plan, code, output,
+  logs, ...) and the `runAgent` / `abortRun` functions.
+- `pages/DashboardPage.jsx` – the main page: prompt box, progress steps and results.
+- `pages/ConfigPage.jsx` – backend URL, max attempts, streaming vs. single response.
+- `components/` – `Navbar`, `PromptBox`, `RunProgress` (the Plan → Code → Run → Answer
+  steps) and `ResultPanel` (Answer / Code / Output / Plan / Log tabs).
+
+## Docker
+
+`Dockerfile` builds the app and serves it with nginx on port 80. It is started
+by the `docker-compose.yml` in the repo root.

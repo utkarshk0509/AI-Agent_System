@@ -1,7 +1,10 @@
 """FastAPI HTTP endpoint integration tests."""
 
+import json
+
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
+
 from app.main import app
 
 
@@ -49,8 +52,7 @@ async def test_stream_endpoint(mock_gemini_service, mock_docker_success):
         response = await client.post("/api/v1/workspace/stream", json=payload)
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
-        import json
-        events = [json.loads(l[5:]) for l in response.text.splitlines() if l.startswith("data:")]
+        events = [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:")]
         nodes = [e["node"] for e in events]
         assert nodes[:3] == ["planner", "coder", "executor"]
         # Artifacts are streamed, not just log lines

@@ -1,7 +1,7 @@
 [project]
 name = "autonomous-code-workspace"
 version = "0.1.0"
-description = "Autonomous Code & Analysis Workspace powered by LangGraph, Gemini 2.5, and Docker Sandbox"
+description = "LangGraph agents that write, run and fix Python code using Gemini and a Docker sandbox"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -34,5 +34,6 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 

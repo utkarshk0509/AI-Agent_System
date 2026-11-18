@@ -1,10 +1,8 @@
-"""Coder Node: Generates or repairs Python code using the Gemini API.
-
-FIX: Now async — uses gemini_service.generate_text_async() so it doesn't block the event loop.
-"""
+"""Coder: writes the Python script, or rewrites it using the reviewer's feedback."""
 
 import re
-from typing import Dict, Any
+from typing import Any, Dict
+
 from app.graph.state import AgentState
 from app.services.gemini_service import gemini_service
 
@@ -22,18 +20,16 @@ STRICT RULES:
 """
 
 
-def _extract_python_code(raw_text: str) -> str:
-    """Strips markdown fences and returns raw Python code."""
-    pattern = r"```(?:python)?\s*(.*?)\s*```"
-    matches = re.findall(pattern, raw_text, re.DOTALL)
+def extract_code(raw_text: str) -> str:
+    """Pull the code out of a ```python ... ``` block."""
+    matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
     if matches:
         return matches[0].strip()
-    # If no fences found, return as-is (Gemini sometimes skips fences)
+    # Gemini sometimes skips the fences
     return raw_text.strip()
 
 
 async def coder_node(state: AgentState) -> Dict[str, Any]:
-    """Async coder: generates initial code or repairs failing code based on reviewer feedback."""
     query = state.get("user_query", "")
     plan = state.get("plan", "")
     existing_code = state.get("generated_code")
@@ -68,7 +64,7 @@ Provide the COMPLETE corrected Python script.
 """
         log_msg = f"[Coder Node] Repaired code for iteration #{iteration + 1}."
     else:
-        print(f"\n[Coder] Generating initial code...", flush=True)
+        print("\n[Coder] Generating initial code...", flush=True)
         prompt = f"""
 Task: Write self-contained Python code to solve this task.
 
@@ -87,7 +83,7 @@ Provide the complete, executable Python script.
         temperature=0.1,
     )
 
-    clean_code = _extract_python_code(raw_response)
+    clean_code = extract_code(raw_response)
     print(f"[Coder] Code ready ({len(clean_code)} chars).", flush=True)
 
     return {
